@@ -180,7 +180,7 @@ func (l *Logger) Debugf(format string, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryf("DEBUG", format, v...))
+	l.print(l.createEntryf(LogLevelDebug, format, v...))
 }
 
 // Infof logs a formatted message at the Info level.
@@ -189,7 +189,7 @@ func (l *Logger) Infof(format string, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryf("INFO", format, v...))
+	l.print(l.createEntryf(LogLevelInfo, format, v...))
 }
 
 // Warnf logs a formatted message at the Warn level.
@@ -198,7 +198,7 @@ func (l *Logger) Warnf(format string, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryf("WARN", format, v...))
+	l.print(l.createEntryf(LogLevelWarn, format, v...))
 }
 
 // Errorf logs a formatted message at the Error level.
@@ -207,7 +207,7 @@ func (l *Logger) Errorf(format string, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryf("ERROR", format, v...))
+	l.print(l.createEntryf(LogLevelError, format, v...))
 }
 
 // Criticalf logs a formatted message at the Critical level.
@@ -216,7 +216,7 @@ func (l *Logger) Criticalf(format string, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryf("CRITICAL", format, v...))
+	l.print(l.createEntryf(LogLevelCritical, format, v...))
 }
 
 // Debugw logs a message at the Debug level with structured key-value pairs.
@@ -225,7 +225,7 @@ func (l *Logger) Debugw(msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryw("DEBUG", msg, kvs...))
+	l.print(l.createEntryw(LogLevelDebug, msg, kvs...))
 }
 
 // Infow logs a message at the Info level with structured key-value pairs.
@@ -234,7 +234,7 @@ func (l *Logger) Infow(msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryw("INFO", msg, kvs...))
+	l.print(l.createEntryw(LogLevelInfo, msg, kvs...))
 }
 
 // Warnw logs a message at the Warn level with structured key-value pairs.
@@ -243,7 +243,7 @@ func (l *Logger) Warnw(msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryw("WARN", msg, kvs...))
+	l.print(l.createEntryw(LogLevelWarn, msg, kvs...))
 }
 
 // Errorw logs a message at the Error level with structured key-value pairs.
@@ -252,7 +252,7 @@ func (l *Logger) Errorw(msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryw("ERROR", msg, kvs...))
+	l.print(l.createEntryw(LogLevelError, msg, kvs...))
 }
 
 // Criticalw logs a message at the Critical level with structured key-value pairs.
@@ -261,13 +261,13 @@ func (l *Logger) Criticalw(msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntryw("CRITICAL", msg, kvs...))
+	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
 }
 
 // createEntryf creates a logEntry from the logger's context and the provided arguments.
-func (l *Logger) createEntryf(severity string, format string, v ...interface{}) *logEntry {
+func (l *Logger) createEntryf(severity logLevel, format string, v ...interface{}) *logEntry {
 	return &logEntry{
-		Severity:      severity,
+		Severity:      string(severity),
 		Message:       l.prefix + fmt.Sprintf(format, v...),
 		Trace:         l.trace,
 		SpanID:        l.spanId,
@@ -279,11 +279,11 @@ func (l *Logger) createEntryf(severity string, format string, v ...interface{}) 
 }
 
 // createEntryw creates a logEntry from the logger's context and the provided arguments.
-func (l *Logger) createEntryw(severity string, msg string, kvs ...interface{}) *logEntry {
+func (l *Logger) createEntryw(severity logLevel, msg string, kvs ...interface{}) *logEntry {
 	payload := make(map[string]interface{})
 
 	logEntry := &logEntry{
-		Severity:      severity,
+		Severity:      string(severity),
 		Message:       l.prefix + msg,
 		Trace:         l.trace,
 		SpanID:        l.spanId,
