@@ -4,7 +4,6 @@
 package harelog
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,12 +133,14 @@ type Logger struct {
 	logLevel      logLevelValue
 	prefix        string
 	correlationID string
+
+	formatter Formatter
 }
 
 // New creates a new Logger with default settings.
 // The default log level is LevelInfo and the default output is os.Stderr.
-func New() *Logger {
-	return &Logger{
+func New(opts ...Option) *Logger {
+	logger := &Logger{
 		out:           os.Stderr,
 		trace:         "",
 		spanId:        "",
@@ -148,7 +149,14 @@ func New() *Logger {
 		prefix:        "",
 		correlationID: "",
 		labels:        make(map[string]string),
+		formatter:     NewJSONFormatter(),
 	}
+
+	for _, opt := range opts {
+		opt(logger)
+	}
+
+	return logger
 }
 
 // Clone creates a new copy of the default logger.
@@ -167,6 +175,7 @@ func (l *Logger) Clone() *Logger {
 		prefix:        l.prefix,
 		correlationID: l.correlationID,
 		labels:        make(map[string]string),
+		formatter:     l.formatter,
 	}
 
 	for k, v := range l.labels {
@@ -551,48 +560,9 @@ func SetDefaultLogLevel(level logLevel) {
 
 // print writes the log entry to the logger's output.
 func (l *Logger) print(e *logEntry) {
-	m := make(map[string]interface{})
-
-	for k, v := range e.Payload {
-		m[k] = v
-	}
-
-	m["message"] = e.Message
-	m["severity"] = e.Severity
-
-	if e.Trace != "" {
-		m["logging.googleapis.com/trace"] = e.Trace
-	}
-
-	if e.SpanID != "" {
-		m["logging.googleapis.com/spanId"] = e.SpanID
-	}
-
-	if e.TraceSampled != nil {
-		m["logging.googleapis.com/trace_sampled"] = e.TraceSampled
-	}
-
-	if e.HTTPRequest != nil {
-		m["httpRequest"] = e.HTTPRequest
-	}
-
-	if e.SourceLocation != nil {
-		m["logging.googleapis.com/sourceLocation"] = e.SourceLocation
-	}
-
-	m["timestamp"] = e.Time
-
-	if len(e.Labels) > 0 {
-		m["labels"] = e.Labels
-	}
-
-	if e.CorrelationID != "" {
-		m["correlationId"] = e.CorrelationID
-	}
-
-	out, err := json.Marshal(m)
+	out, err := l.formatter.Format(e)
 	if err != nil {
-		log.Printf("json.Marshal: %v", err)
+		log.Printf("failed to format log entry: %v", err)
 
 		return
 	}
@@ -809,5 +779,24 @@ func sprintMessage(v ...interface{}) string {
 
 // sprintlnMessage builds a string from a slice of interfaces, separated by spaces, with a final newline.
 func sprintlnMessage(v ...interface{}) string {
-	return sprintMessage(v...) + "\\n"
+	return sprintMessage(v...) + "\n"
+}
+
+// Option configures a Logger.
+type Option func(*Logger)
+
+// WithFormatter sets the formatter for the logger.
+func WithFormatter(f Formatter) Option {
+	return func(l *Logger) {
+		l.formatter = f
+	}
+}
+
+// WithOutput sets the writer for the logger.
+func WithOutput(w io.Writer) Option {
+	return func(l *Logger) {
+		if w != nil {
+			l.out = w
+		}
+	}
 }

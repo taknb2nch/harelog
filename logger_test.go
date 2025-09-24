@@ -19,6 +19,10 @@ func TestNew(t *testing.T) {
 	if l.logLevel != logLevelValueInfo {
 		t.Errorf("expected default level to be Info, got %v", l.logLevel)
 	}
+	// Test default formatter
+	if _, ok := l.formatter.(*jsonFormatter); !ok {
+		t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
+	}
 }
 
 // TestParseLogLevel tests the log level parsing function.
@@ -171,11 +175,8 @@ func TestSpecialFields(t *testing.T) {
 
 // TestDefaultLogger verifies package-level functions.
 func TestDefaultLogger(t *testing.T) {
-	// Save original state
 	originalOutput := std.out
 	originalLevel := std.logLevel
-
-	// Defer restoration
 	defer func() {
 		std.out = originalOutput
 		std.logLevel = originalLevel
@@ -186,19 +187,16 @@ func TestDefaultLogger(t *testing.T) {
 	level, _ := ParseLogLevel("ERROR")
 	SetDefaultLogLevel(level)
 
-	// This should not be logged
 	Infof("info message")
 	if buf.Len() > 0 {
 		t.Errorf("expected info message to be suppressed, but got: %s", buf.String())
 	}
 
-	// This should be logged
 	Errorf("error message")
 	if buf.Len() == 0 {
 		t.Error("expected error message to be logged, but buffer is empty")
 	}
 
-	// Basic concurrency test
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -221,26 +219,13 @@ func TestPrintMethods(t *testing.T) {
 		logFunc  func()
 		expected string
 	}{
-		{
-			"Printf",
-			func() { l.Printf("hello %s", "world") },
-			`{"message":"hello world","severity":"INFO"`,
-		},
-		{
-			"Print",
-			func() { l.Print("hello", "world", 123) },
-			`{"message":"hello world 123","severity":"INFO"`,
-		},
-		{
-			"Println",
-			func() { l.Println("hello", "world") },
-			`{"message":"hello world\\n","severity":"INFO"`,
-		},
+		{"Printf", func() { l.Printf("hello %s", "world") }, `{"message":"hello world","severity":"INFO"`},
+		{"Print", func() { l.Print("hello", "world", 123) }, `{"message":"hello world 123","severity":"INFO"`},
+		{"Println", func() { l.Println("hello", "world") }, `{"message":"hello world\n","severity":"INFO"`},
 	}
 
 	for _, tt := range tests {
 		tc := tt
-
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
 			tc.logFunc()
@@ -256,13 +241,9 @@ func TestFatalMethods(t *testing.T) {
 	var buf bytes.Buffer
 	l := New().WithOutput(&buf)
 
-	// Mock os.Exit to prevent test termination
-	// and to verify that it was called.
 	var exitCode int
 	originalExit := osExit
-	osExit = func(code int) {
-		exitCode = code
-	}
+	osExit = func(code int) { exitCode = code }
 	defer func() { osExit = originalExit }()
 
 	tests := []struct {
@@ -270,32 +251,17 @@ func TestFatalMethods(t *testing.T) {
 		logFunc  func()
 		expected string
 	}{
-		{
-			"Fatalf",
-			func() { l.Fatalf("fatal %s", "error") },
-			`{"message":"fatal error","severity":"CRITICAL"`,
-		},
-		{
-			"Fatal",
-			func() { l.Fatal("fatal", "error", 123) },
-			`{"message":"fatal error 123","severity":"CRITICAL"`,
-		},
-		{
-			"Fatalln",
-			func() { l.Fatalln("fatal", "error") },
-			`{"message":"fatal error\\n","severity":"CRITICAL"`,
-		},
+		{"Fatalf", func() { l.Fatalf("fatal %s", "error") }, `{"message":"fatal error","severity":"CRITICAL"`},
+		{"Fatal", func() { l.Fatal("fatal", "error", 123) }, `{"message":"fatal error 123","severity":"CRITICAL"`},
+		{"Fatalln", func() { l.Fatalln("fatal", "error") }, `{"message":"fatal error\n","severity":"CRITICAL"`},
 	}
 
 	for _, tt := range tests {
 		tc := tt
-
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
-			exitCode = 0 // Reset before each test
-
+			exitCode = 0
 			tc.logFunc()
-
 			if !strings.HasPrefix(buf.String(), tc.expected) {
 				t.Errorf("unexpected log output for %s:\ngot:  %s\nwant prefix: %s", tc.name, buf.String(), tc.expected)
 			}
@@ -304,4 +270,46 @@ func TestFatalMethods(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFormatters verifies the WithFormatter option and logger's integration with formatters.
+func TestFormatters(t *testing.T) {
+	var buf bytes.Buffer
+
+	// Test that New() without options uses JSONFormatter
+	t.Run("Default Formatter is JSON", func(t *testing.T) {
+		buf.Reset()
+		logger := New(WithOutput(&buf))
+		logger.Infow("json test", "key", "value")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("expected valid JSON, but got error: %v", err)
+		}
+	})
+
+	// Test switching to TextFormatter
+	t.Run("WithFormatter switches to TextFormatter", func(t *testing.T) {
+		buf.Reset()
+		logger := New(
+			WithOutput(&buf),
+			WithFormatter(NewTextFormatter()),
+		)
+
+		// This call should now use the text formatter
+		logger.Infow("text test", "key", "value")
+
+		got := strings.TrimSpace(buf.String())
+
+		// Check for text format characteristics, not exact time
+		if !strings.Contains(got, "[INFO] text test") {
+			t.Errorf("output does not contain text message: %s", got)
+		}
+		if !strings.Contains(got, `{key="value"}`) {
+			t.Errorf("output does not contain text payload: %s", got)
+		}
+		if strings.HasPrefix(got, "{") {
+			t.Errorf("output appears to be JSON, not text: %s", got)
+		}
+	})
 }
