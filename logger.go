@@ -47,6 +47,8 @@ const (
 var (
 	std      = New()
 	stdMutex = &sync.RWMutex{}
+
+	osExit = os.Exit
 )
 
 var levelMap = map[logLevel]logLevelValue{
@@ -219,6 +221,56 @@ func (l *Logger) Criticalf(format string, v ...interface{}) {
 	l.print(l.createEntryf(LogLevelCritical, format, v...))
 }
 
+// Printf logs a formatted message at the Info level, like log.Printf.
+func (l *Logger) Printf(format string, v ...interface{}) {
+	l.Infof(format, v...)
+}
+
+// Print logs its arguments at the Info level, like log.Print.
+func (l *Logger) Print(v ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(LogLevelInfo, sprintMessage(v...)))
+}
+
+// Println logs its arguments at the Info level, like log.Println.
+func (l *Logger) Println(v ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(LogLevelInfo, sprintlnMessage(v...)))
+}
+
+// Fatalf logs a formatted message at the Critical level and then calls os.Exit(1).
+func (l *Logger) Fatalf(format string, v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntryf(LogLevelCritical, format, v...))
+	}
+
+	osExit(1)
+}
+
+// Fatal logs its arguments at the Critical level and then calls os.Exit(1).
+func (l *Logger) Fatal(v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntry(LogLevelCritical, sprintMessage(v...)))
+	}
+
+	osExit(1)
+}
+
+// Fatalln logs its arguments at the Critical level and then calls os.Exit(1).
+func (l *Logger) Fatalln(v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntry(LogLevelCritical, sprintlnMessage(v...)))
+	}
+
+	osExit(1)
+}
+
 // Debugw logs a message at the Debug level with structured key-value pairs.
 func (l *Logger) Debugw(msg string, kvs ...interface{}) {
 	if !l.IsDebugEnabled() {
@@ -264,11 +316,11 @@ func (l *Logger) Criticalw(msg string, kvs ...interface{}) {
 	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
 }
 
-// createEntryf creates a logEntry from the logger's context and the provided arguments.
-func (l *Logger) createEntryf(severity logLevel, format string, v ...interface{}) *logEntry {
+// createEntry creates a logEntry with a pre-formatted message.
+func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
 	return &logEntry{
-		Severity:      string(severity),
-		Message:       l.prefix + fmt.Sprintf(format, v...),
+		Severity:      string(level),
+		Message:       l.prefix + msg,
 		Trace:         l.trace,
 		SpanID:        l.spanId,
 		TraceSampled:  l.traceSampled,
@@ -276,6 +328,11 @@ func (l *Logger) createEntryf(severity logLevel, format string, v ...interface{}
 		Labels:        l.labels,
 		Time:          jsonTime{time.Now()},
 	}
+}
+
+// createEntryf creates a logEntry by formatting a message.
+func (l *Logger) createEntryf(level logLevel, format string, v ...interface{}) *logEntry {
+	return l.createEntry(level, fmt.Sprintf(format, v...))
 }
 
 // createEntryw creates a logEntry from the logger's context and the provided arguments.
@@ -623,6 +680,54 @@ func Criticalf(format string, v ...interface{}) {
 	std.Criticalf(format, v...)
 }
 
+// Printf logs a formatted message at the Info level using the default logger.
+func Printf(format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Printf(format, v...)
+}
+
+// Print logs its arguments at the Info level using the default logger.
+func Print(v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Print(v...)
+}
+
+// Println logs its arguments at the Info level using the default logger.
+func Println(v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Println(v...)
+}
+
+// Fatalf logs a formatted message at the Critical level and then calls os.Exit(1).
+func Fatalf(format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Fatalf(format, v...)
+}
+
+// Fatal logs its arguments at the Critical level and then calls os.Exit(1).
+func Fatal(v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Fatal(v...)
+}
+
+// Fatalln logs its arguments at the Critical level and then calls os.Exit(1).
+func Fatalln(v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Fatalln(v...)
+}
+
 // Debugw logs a message at the Debug level using the default logger.
 func Debugw(msg string, kvs ...interface{}) {
 	stdMutex.RLock()
@@ -686,4 +791,23 @@ func isErrorEnabled(level logLevelValue) bool {
 // isCriticalEnabled returns
 func isCriticalEnabled(level logLevelValue) bool {
 	return level >= logLevelValueCritical
+}
+
+// sprintMessage builds a string from a slice of interfaces, separated by spaces.
+func sprintMessage(v ...interface{}) string {
+	var b strings.Builder
+
+	for i, arg := range v {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprint(&b, arg)
+	}
+
+	return b.String()
+}
+
+// sprintlnMessage builds a string from a slice of interfaces, separated by spaces, with a final newline.
+func sprintlnMessage(v ...interface{}) string {
+	return sprintMessage(v...) + "\\n"
 }

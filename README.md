@@ -14,6 +14,28 @@ go get github.com/taknb2nch/harelog
 
 ## Usage
 
+### Standard Logging (`Print`, `Fatal` series)
+For compatibility with the standard `log` package, `Print` and `Fatal` families of methods are provided.
+- `Print` methods log at the `INFO` level.
+- `Fatal` methods log at the `CRITICAL` level and then call os.Exit(1).
+
+```go
+import "github.com/taknb2nch/harelog"
+
+harelog.Println("Server is starting...")
+
+if err != nil {
+    harelog.Fatalf("Failed to initialize database: %v", err)
+}
+```
+
+**Example output:**
+```json
+{"message":"Server is starting...\\n","severity":"INFO","timestamp":"..."}
+{"message":"Failed to initialize database: ...","severity":"CRITICAL","timestamp":"..."}
+```
+If `Fatalf` is called, after printing the above log, the program will exit with status code 1.
+
 ### Formatted Logging (`...f` series)
 
 Outputs simple logs using a `printf`-style format.

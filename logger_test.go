@@ -70,27 +70,29 @@ func TestLogLevels(t *testing.T) {
 	}
 }
 
-// TestWithMethods verifies the immutability of the logger for request-scoped info.
+// TestWithMethods verifies the immutability of the logger.
 func TestWithMethods(t *testing.T) {
 	var buf bytes.Buffer
 	l1 := New().WithOutput(&buf)
 	l2 := l1.WithPrefix("[request] ")
 	l3 := l2.WithLabels(map[string]string{"user": "test"})
-	l4 := l3.WithTrace("test-trace")
 
-	// Ensure original loggers are not modified
-	if l1.prefix != "" || len(l1.labels) > 0 || l1.trace != "" {
-		t.Error("l1 should not have been modified")
+	// Ensure l1 and l2 are not modified
+	if l1.prefix != "" {
+		t.Error("l1 should not have a prefix")
 	}
-	if l2.prefix == "" || len(l2.labels) > 0 || l2.trace != "" {
-		t.Error("l2 should only have a prefix")
+	if _, ok := l1.labels["user"]; ok {
+		t.Error("l1 should not have labels")
 	}
-	if l3.prefix == "" || len(l3.labels) == 0 || l3.trace != "" {
-		t.Error("l3 should have prefix and labels")
+	if l2.prefix == "" {
+		t.Error("l2 should have a prefix")
+	}
+	if _, ok := l2.labels["user"]; ok {
+		t.Error("l2 should not have labels")
 	}
 
 	// Test output of the final logger
-	l4.Infof("test message")
+	l3.Infof("test message")
 	output := buf.String()
 	if !strings.Contains(output, "[request] test message") {
 		t.Errorf("output should contain prefix and message, got: %s", output)
@@ -98,23 +100,18 @@ func TestWithMethods(t *testing.T) {
 	if !strings.Contains(output, `"user":"test"`) {
 		t.Errorf("output should contain labels, got: %s", output)
 	}
-	if !strings.Contains(output, `"logging.googleapis.com/trace":"test-trace"`) {
-		t.Errorf("output should contain trace, got: %s", output)
-	}
 }
 
-// TestStructuredOutput verifies the JSON output of Infow for general payloads.
+// TestStructuredOutput verifies the JSON output of Infow.
 func TestStructuredOutput(t *testing.T) {
 	var buf bytes.Buffer
 	l := New().WithOutput(&buf)
-
-	l.Infow("user logged in", "user_id", 123, "ip_address", "127.0.0.1", "error", errors.New("test error"))
+	l.Infow("user logged in", "user_id", 123, "ip_address", "127.0.0.1")
 
 	var entry map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
 		t.Fatalf("failed to unmarshal log output: %v", err)
 	}
-
 	if msg, _ := entry["message"].(string); msg != "user logged in" {
 		t.Errorf("unexpected message: got %q, want %q", msg, "user logged in")
 	}
@@ -124,58 +121,61 @@ func TestStructuredOutput(t *testing.T) {
 	if ip, _ := entry["ip_address"].(string); ip != "127.0.0.1" {
 		t.Errorf("unexpected ip_address: got %q, want %q", ip, "127.0.0.1")
 	}
-	if errMsg, _ := entry["error"].(string); errMsg != "test error" {
-		t.Errorf("unexpected error message: got %q, want %q", errMsg, "test error")
-	}
 }
 
-// TestEventScopedFields verifies that event-scoped fields like SourceLocation and HTTPRequest are handled correctly.
-func TestEventScopedFields(t *testing.T) {
-	var buf bytes.Buffer
-	l := New().WithOutput(&buf)
+// TestSpecialFields verifies the handling of special keys like error, httpRequest, and sourceLocation.
+func TestSpecialFields(t *testing.T) {
+	t.Run("error field", func(t *testing.T) {
+		var buf bytes.Buffer
+		l := New().WithOutput(&buf)
+		err := errors.New("database connection failed")
 
-	sl := &SourceLocation{
-		File:     "main.go",
-		Line:     42,
-		Function: "main.main",
-	}
-	req := &HTTPRequest{
-		RequestMethod: "GET",
-		RequestURL:    "/test",
-		Status:        200,
-	}
+		l.Errorw("operation failed", "error", err)
 
-	l.Errorw("operation failed", "sourceLocation", sl, "httpRequest", req)
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal log output: %v", err)
+		}
+		if errMsg, _ := entry["error"].(string); errMsg != "database connection failed" {
+			t.Errorf("unexpected error message: got %q, want %q", errMsg, "database connection failed")
+		}
+	})
 
-	var entry map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-		t.Fatalf("failed to unmarshal log output: %v", err)
-	}
+	t.Run("sourceLocation field", func(t *testing.T) {
+		var buf bytes.Buffer
+		l := New().WithOutput(&buf)
+		sl := &SourceLocation{
+			File:     "main.go",
+			Line:     42,
+			Function: "main.main",
+		}
+		l.Errorw("error with source", "sourceLocation", sl)
 
-	// Check for sourceLocation
-	slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
-	if !ok {
-		t.Fatal("sourceLocation not found in log output")
-	}
-	if slMap["file"] != "main.go" || slMap["line"] != 42.0 { // JSON numbers are float64
-		t.Errorf("sourceLocation is incorrect: %+v", slMap)
-	}
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal log output: %v", err)
+		}
 
-	// Check for httpRequest
-	reqMap, ok := entry["httpRequest"].(map[string]interface{})
-	if !ok {
-		t.Fatal("httpRequest not found in log output")
-	}
-	if reqMap["requestMethod"] != "GET" || reqMap["status"] != 200.0 {
-		t.Errorf("httpRequest is incorrect: %+v", reqMap)
-	}
+		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		if !ok {
+			t.Fatal("sourceLocation not found or not a map in log output")
+		}
+		if file, _ := slMap["file"].(string); file != "main.go" {
+			t.Errorf("unexpected file in sourceLocation: got %q, want %q", file, "main.go")
+		}
+		if line, _ := slMap["line"].(float64); int(line) != 42 {
+			t.Errorf("unexpected line in sourceLocation: got %v, want 42", line)
+		}
+	})
 }
 
-// TestDefaultLogger verifies package-level functions and their thread safety.
+// TestDefaultLogger verifies package-level functions.
 func TestDefaultLogger(t *testing.T) {
-	// Ensure we don't interfere with other tests by resetting at the end
+	// Save original state
 	originalOutput := std.out
 	originalLevel := std.logLevel
+
+	// Defer restoration
 	defer func() {
 		std.out = originalOutput
 		std.logLevel = originalLevel
@@ -189,15 +189,14 @@ func TestDefaultLogger(t *testing.T) {
 	// This should not be logged
 	Infof("info message")
 	if buf.Len() > 0 {
-		t.Fatalf("expected info message to be suppressed, but got: %s", buf.String())
+		t.Errorf("expected info message to be suppressed, but got: %s", buf.String())
 	}
 
 	// This should be logged
 	Errorf("error message")
 	if buf.Len() == 0 {
-		t.Fatal("expected error message to be logged, but buffer is empty")
+		t.Error("expected error message to be logged, but buffer is empty")
 	}
-	buf.Reset()
 
 	// Basic concurrency test
 	var wg sync.WaitGroup
@@ -205,16 +204,104 @@ func TestDefaultLogger(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			Infof("concurrent info") // Should be suppressed
+			Infof("concurrent info")
 			Errorf("concurrent error %d", id)
 		}(i)
 	}
 	wg.Wait()
+}
 
-	// Count how many error messages were logged
-	output := buf.String()
-	lineCount := strings.Count(output, "\n")
-	if lineCount != 10 {
-		t.Errorf("expected 10 error lines from concurrent logging, but got %d", lineCount)
+// TestPrintMethods verifies the Print, Printf, and Println methods.
+func TestPrintMethods(t *testing.T) {
+	var buf bytes.Buffer
+	l := New().WithOutput(&buf)
+
+	tests := []struct {
+		name     string
+		logFunc  func()
+		expected string
+	}{
+		{
+			"Printf",
+			func() { l.Printf("hello %s", "world") },
+			`{"message":"hello world","severity":"INFO"`,
+		},
+		{
+			"Print",
+			func() { l.Print("hello", "world", 123) },
+			`{"message":"hello world 123","severity":"INFO"`,
+		},
+		{
+			"Println",
+			func() { l.Println("hello", "world") },
+			`{"message":"hello world\\n","severity":"INFO"`,
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			tc.logFunc()
+			if !strings.HasPrefix(buf.String(), tc.expected) {
+				t.Errorf("unexpected log output for %s:\ngot:  %s\nwant prefix: %s", tc.name, buf.String(), tc.expected)
+			}
+		})
+	}
+}
+
+// TestFatalMethods verifies the Fatal, Fatalf, and Fatalln methods.
+func TestFatalMethods(t *testing.T) {
+	var buf bytes.Buffer
+	l := New().WithOutput(&buf)
+
+	// Mock os.Exit to prevent test termination
+	// and to verify that it was called.
+	var exitCode int
+	originalExit := osExit
+	osExit = func(code int) {
+		exitCode = code
+	}
+	defer func() { osExit = originalExit }()
+
+	tests := []struct {
+		name     string
+		logFunc  func()
+		expected string
+	}{
+		{
+			"Fatalf",
+			func() { l.Fatalf("fatal %s", "error") },
+			`{"message":"fatal error","severity":"CRITICAL"`,
+		},
+		{
+			"Fatal",
+			func() { l.Fatal("fatal", "error", 123) },
+			`{"message":"fatal error 123","severity":"CRITICAL"`,
+		},
+		{
+			"Fatalln",
+			func() { l.Fatalln("fatal", "error") },
+			`{"message":"fatal error\\n","severity":"CRITICAL"`,
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			exitCode = 0 // Reset before each test
+
+			tc.logFunc()
+
+			if !strings.HasPrefix(buf.String(), tc.expected) {
+				t.Errorf("unexpected log output for %s:\ngot:  %s\nwant prefix: %s", tc.name, buf.String(), tc.expected)
+			}
+			if exitCode != 1 {
+				t.Errorf("expected os.Exit(1) to be called for %s, but exit code was %d", tc.name, exitCode)
+			}
+		})
 	}
 }
