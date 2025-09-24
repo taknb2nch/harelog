@@ -90,6 +90,21 @@ reqLogger := harelog.WithTrace(traceID)
 reqLogger.Infof("request processing started")
 ```
 
+### Text Format
+
+```go
+// Use the WithFormatter option to switch to the text logger
+logger := harelog.New(
+    harelog.WithFormatter(harelog.NewTextFormatter()),
+)
+logger.Infow("server started", "port", 8080)
+```
+
+**Example Output:**
+```
+2025-09-25T13:00:00Z [INFO] server started {port=8080}
+```
+
 ---
 
 ## Special Fields
