@@ -312,6 +312,47 @@ func TestFatalMethods(t *testing.T) {
 	}
 }
 
+// TestFatalwMethod verifies the Fatalw method.
+func TestFatalwMethod(t *testing.T) {
+	var buf bytes.Buffer
+	l := New(WithOutput(&buf))
+
+	// Mock os.Exit to prevent test termination
+	var exitCode int
+	originalExit := osExit
+	osExit = func(code int) {
+		exitCode = code
+	}
+	defer func() { osExit = originalExit }()
+
+	// Call the method to be tested
+	l.Fatalw("database connection failed", "host", "localhost", "port", 5432)
+
+	// 1. Verify that os.Exit(1) was called
+	if exitCode != 1 {
+		t.Errorf("expected os.Exit(1) to be called, but exit code was %d", exitCode)
+	}
+
+	// 2. Verify the structured log output
+	var entry map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("failed to unmarshal log output: %v", err)
+	}
+
+	if msg, _ := entry["message"].(string); msg != "database connection failed" {
+		t.Errorf("unexpected message: got %q, want %q", msg, "database connection failed")
+	}
+	if severity, _ := entry["severity"].(string); severity != string(LogLevelCritical) {
+		t.Errorf("unexpected severity: got %q, want %q", severity, LogLevelCritical)
+	}
+	if host, _ := entry["host"].(string); host != "localhost" {
+		t.Errorf("unexpected host: got %q, want %q", host, "localhost")
+	}
+	if port, _ := entry["port"].(float64); int(port) != 5432 {
+		t.Errorf("unexpected port: got %v, want %v", port, 5432)
+	}
+}
+
 // TestFormatters verifies the WithFormatter option and logger's integration with formatters.
 func TestFormatters(t *testing.T) {
 	var buf bytes.Buffer
