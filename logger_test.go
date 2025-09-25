@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -174,39 +176,77 @@ func TestSpecialFields(t *testing.T) {
 }
 
 // TestDefaultLogger verifies package-level functions.
+// TestDefaultLogger verifies package-level functions.
 func TestDefaultLogger(t *testing.T) {
-	originalOutput := std.out
-	originalLevel := std.logLevel
+	// Save and restore original std logger
+	originalStd := std
 	defer func() {
-		std.out = originalOutput
-		std.logLevel = originalLevel
+		std = originalStd
 	}()
 
-	var buf bytes.Buffer
-	SetDefaultOutput(&buf)
-	level, _ := ParseLogLevel("ERROR")
-	SetDefaultLogLevel(level)
-
-	Infof("info message")
-	if buf.Len() > 0 {
-		t.Errorf("expected info message to be suppressed, but got: %s", buf.String())
+	// setup helper resets std to a clean logger for each subtest
+	setup := func() *bytes.Buffer {
+		buf := &bytes.Buffer{}
+		// Create a clean logger instance and set it as the default
+		std = New(WithOutput(buf))
+		return buf
 	}
 
-	Errorf("error message")
-	if buf.Len() == 0 {
-		t.Error("expected error message to be logged, but buffer is empty")
-	}
+	t.Run("SetDefaultLogLevel", func(t *testing.T) {
+		buf := setup()
+		SetDefaultLogLevel(LogLevelError)
 
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			Infof("concurrent info")
-			Errorf("concurrent error %d", id)
-		}(i)
-	}
-	wg.Wait()
+		Infof("info message") // Should be suppressed
+		if buf.Len() > 0 {
+			t.Errorf("expected info message to be suppressed, but got: %s", buf.String())
+		}
+
+		Errorf("error message") // Should be logged
+		if buf.Len() == 0 {
+			t.Error("expected error message to be logged, but buffer is empty")
+		}
+	})
+
+	t.Run("SetDefaultFormatter", func(t *testing.T) {
+		buf := setup()
+		// Switch the default logger to use the text formatter
+		SetDefaultFormatter(NewTextFormatter())
+
+		Infow("text output test", "key", "value")
+
+		got := strings.TrimSpace(buf.String())
+
+		// Verify the output is in text format, not JSON
+		if !strings.Contains(got, "[INFO] text output test") {
+			t.Errorf("output does not contain text message: %s", got)
+		}
+		if !strings.Contains(got, `{key="value"}`) {
+			t.Errorf("output does not contain text payload: %s", got)
+		}
+		if strings.HasPrefix(got, "{") {
+			t.Errorf("output appears to be JSON, not text: %s", got)
+		}
+	})
+
+	t.Run("Concurrency", func(t *testing.T) {
+		// Set up a clean logger with a discard writer to avoid noisy output
+		std = New(WithOutput(io.Discard))
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				Infof("concurrent info %d", id)
+				Errorf("concurrent error %d", id)
+				if id%10 == 0 {
+					// Concurrently modify the default logger
+					SetDefaultPrefix(fmt.Sprintf("[%d]", id))
+				}
+			}(i)
+		}
+		wg.Wait()
+		// This test just checks for race conditions and panics.
+	})
 }
 
 // TestPrintMethods verifies the Print, Printf, and Println methods.
