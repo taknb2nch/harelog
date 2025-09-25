@@ -325,6 +325,18 @@ func (l *Logger) Criticalw(msg string, kvs ...interface{}) {
 	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
 }
 
+// Fatalw logs a message with structured key-value pairs at the Critical level
+// and then calls os.Exit(1).
+func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
+	if !l.IsCriticalEnabled() {
+		return
+	}
+
+	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
+
+	osExit(1)
+}
+
 // createEntry creates a logEntry with a pre-formatted message.
 func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
 	return &logEntry{
@@ -758,6 +770,15 @@ func Criticalw(msg string, kvs ...interface{}) {
 	defer stdMutex.RUnlock()
 
 	std.Criticalw(msg, kvs...)
+}
+
+// Fatalw logs a message with structured key-value pairs at the Critical level
+// using the default logger and then calls os.Exit(1).
+func Fatalw(msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.Fatalw(msg, kvs...)
 }
 
 // isDebugEnabled returns
