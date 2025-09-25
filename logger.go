@@ -479,7 +479,21 @@ func (l *Logger) WithLogLevel(level logLevel) *Logger {
 // WithOutput returns a new logger instance that writes to the provided io.Writer.
 func (l *Logger) WithOutput(w io.Writer) *Logger {
 	newLogger := l.Clone()
-	newLogger.out = w
+
+	if w != nil {
+		newLogger.out = w
+	}
+
+	return newLogger
+}
+
+// WithFormatter returns a new logger instance with the specified formatter.
+func (l *Logger) WithFormatter(f Formatter) *Logger {
+	newLogger := l.Clone()
+
+	if f != nil {
+		newLogger.formatter = f
+	}
 
 	return newLogger
 }
@@ -547,6 +561,14 @@ func SetDefaultOutput(w io.Writer) {
 	defer stdMutex.Unlock()
 
 	std = std.WithOutput(w)
+}
+
+// SetDefaultFormatter sets the formatter for the default logger.
+func SetDefaultFormatter(f Formatter) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithFormatter(f)
 }
 
 // SetDefaultLogLevel sets the log level for the default logger.
@@ -788,7 +810,9 @@ type Option func(*Logger)
 // WithFormatter sets the formatter for the logger.
 func WithFormatter(f Formatter) Option {
 	return func(l *Logger) {
-		l.formatter = f
+		if f != nil {
+			l.formatter = f
+		}
 	}
 }
 
