@@ -108,6 +108,138 @@ func TestWithMethods(t *testing.T) {
 	}
 }
 
+// TestWithMethod verifies the functionality of the contextual logger.
+func TestWithMethod(t *testing.T) {
+	var buf bytes.Buffer
+
+	// This helper resets the buffer for each subtest.
+	setup := func() {
+		buf.Reset()
+	}
+
+	t.Run("Context is added to logs", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With("service", "api", "requestID", "abc-123")
+
+		childLogger.Infof("request received")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if service, _ := entry["service"].(string); service != "api" {
+			t.Errorf("expected service to be 'api', got %q", service)
+		}
+		if reqID, _ := entry["requestID"].(string); reqID != "abc-123" {
+			t.Errorf("expected requestID to be 'abc-123', got %q", reqID)
+		}
+	})
+
+	t.Run("Formatted logs include context", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		err := errors.New("context error")
+		childLogger := logger.With("error", err, "requestID", "xyz-789")
+
+		childLogger.Warnf("Operation failed for user %d", 123)
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if errMsg, _ := entry["error"].(string); errMsg != "context error" {
+			t.Errorf("expected special key 'error' to be processed, got %q", errMsg)
+		}
+		if reqID, _ := entry["requestID"].(string); reqID != "xyz-789" {
+			t.Errorf("expected requestID to be 'xyz-789', got %q", reqID)
+		}
+		if msg, _ := entry["message"].(string); msg != "Operation failed for user 123" {
+			t.Errorf("unexpected message: got %q", msg)
+		}
+	})
+
+	t.Run("Special keys with wrong type are kept at top level", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With(
+			"httpRequest", "this is not a request object",
+			"sourceLocation", 12345,
+		)
+
+		childLogger.Infof("testing wrong types")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		// The key should exist at the top level, but its value will be the raw (incorrect) type.
+		if val, ok := entry["httpRequest"].(string); !ok || val != "this is not a request object" {
+			t.Errorf("expected httpRequest to be a string in the output, got %T with value %v", entry["httpRequest"], entry["httpRequest"])
+		}
+		if val, ok := entry["sourceLocation"].(float64); !ok || int(val) != 12345 {
+			t.Errorf("expected sourceLocation to be a number in the output, got %T with value %v", entry["sourceLocation"], entry["sourceLocation"])
+		}
+	})
+
+	t.Run("With is immutable", func(t *testing.T) {
+		setup()
+		parentLogger := New(WithOutput(&buf))
+		_ = parentLogger.With("temporary", "value")
+
+		parentLogger.Infof("parent log")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if _, exists := entry["temporary"]; exists {
+			t.Error("parent logger should not be mutated by With")
+		}
+	})
+
+	t.Run("Local scope overrides context", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With("status", "pending")
+
+		childLogger.Infow("request completed", "status", "success")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if status, _ := entry["status"].(string); status != "success" {
+			t.Errorf("expected status to be 'success' (overridden), but got %q", status)
+		}
+	})
+
+	t.Run("Panics on odd number of arguments", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected With to panic with an odd number of arguments, but it did not")
+			}
+		}()
+		logger := New()
+		_ = logger.With("key1", "value1", "key2")
+	})
+
+	t.Run("Panics on non-string key", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected With to panic with a non-string key, but it did not")
+			}
+		}()
+		logger := New()
+		_ = logger.With(123, "value1")
+	})
+}
+
 // TestStructuredOutput verifies the JSON output of Infow.
 func TestStructuredOutput(t *testing.T) {
 	var buf bytes.Buffer

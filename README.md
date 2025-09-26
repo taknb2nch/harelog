@@ -36,6 +36,33 @@ if err != nil {
 ```
 If `Fatalf` is called, after printing the above log, the program will exit with status code 1.
 
+### Adding Context with the `With` Method (Child Loggers)
+
+You can create a contextual logger (or "child logger") that carries a predefined set of key-value pairs. This is extremely useful for request-scoped logging, as you don't need to repeat fields like a `requestID` in every log call.
+
+```go
+var logger = harelog.New() // Your base logger
+
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+    // Create a new child logger with context for this specific request.
+    // The base logger is not modified.
+    reqLogger := logger.With("requestID", "abc-123", "remoteAddr", r.RemoteAddr)
+
+    reqLogger.Infof("request received")
+    // ... do some work ...
+    reqLogger.Infow("user authenticated", "userID", "user-456")
+}
+```
+
+**Example output:**
+
+The `requestID` and `remoteAddr` fields are automatically added to all logs from `reqLogger`.
+
+```json
+{"message":"request received","severity":"INFO","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
+{"message":"user authenticated","severity":"INFO","userID":"user-456","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
+```
+
 ### Formatted Logging (`...f` series)
 
 Outputs simple logs using a `printf`-style format.
