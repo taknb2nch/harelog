@@ -120,6 +120,53 @@ type logEntry struct {
 	Payload map[string]interface{} `json:"-"`
 }
 
+// applyKVs applies key-value pairs to a log entry, handling special keys.
+func (e *logEntry) applyKVs(kvs ...interface{}) {
+	n := len(kvs)
+	if n%2 != 0 {
+		// confirm whether last key is string or not
+		if key, ok := kvs[n-1].(string); ok {
+			e.Payload[key] = "KEY_WITHOUT_VALUE"
+		}
+
+		e.Payload["logging_error"] = "odd number of arguments received"
+
+		n--
+	}
+
+	for i := 0; i < n; i += 2 {
+		key, ok := kvs[i].(string)
+		if !ok {
+			// For simplicity in this helper, we skip non-string keys.
+			// The With method will panic on them, ensuring safety.
+			continue
+		}
+
+		switch key {
+		case "error":
+			if err, ok := kvs[i+1].(error); ok {
+				e.Payload[key] = err.Error()
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		case "httpRequest":
+			if req, ok := kvs[i+1].(*HTTPRequest); ok {
+				e.HTTPRequest = req
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		case "sourceLocation":
+			if sl, ok := kvs[i+1].(*SourceLocation); ok {
+				e.SourceLocation = sl
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		default:
+			e.Payload[key] = kvs[i+1]
+		}
+	}
+}
+
 // --- Logger ---
 
 // Logger is a structured logger that provides leveled logging.
@@ -133,6 +180,8 @@ type Logger struct {
 	logLevel      logLevelValue
 	prefix        string
 	correlationID string
+
+	payload map[string]interface{}
 
 	formatter Formatter
 }
@@ -149,6 +198,7 @@ func New(opts ...Option) *Logger {
 		prefix:        "",
 		correlationID: "",
 		labels:        make(map[string]string),
+		payload:       make(map[string]interface{}),
 		formatter:     NewJSONFormatter(),
 	}
 
@@ -175,11 +225,16 @@ func (l *Logger) Clone() *Logger {
 		prefix:        l.prefix,
 		correlationID: l.correlationID,
 		labels:        make(map[string]string),
+		payload:       make(map[string]interface{}),
 		formatter:     l.formatter,
 	}
 
 	for k, v := range l.labels {
 		newLogger.labels[k] = v
+	}
+
+	for k, v := range l.payload {
+		newLogger.payload[k] = v
 	}
 
 	return newLogger
@@ -339,7 +394,7 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 
 // createEntry creates a logEntry with a pre-formatted message.
 func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
-	return &logEntry{
+	e := &logEntry{
 		Severity:      string(level),
 		Message:       l.prefix + msg,
 		Trace:         l.trace,
@@ -348,7 +403,21 @@ func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
 		CorrelationID: l.correlationID,
 		Labels:        l.labels,
 		Time:          jsonTime{time.Now()},
+		Payload:       make(map[string]interface{}, len(l.payload)),
 	}
+
+	// Convert logger's context map to a slice and apply it.
+	if len(l.payload) > 0 {
+		contextKVs := make([]interface{}, 0, len(l.payload)*2)
+
+		for k, v := range l.payload {
+			contextKVs = append(contextKVs, k, v)
+		}
+
+		e.applyKVs(contextKVs...)
+	}
+
+	return e
 }
 
 // createEntryf creates a logEntry by formatting a message.
@@ -358,71 +427,10 @@ func (l *Logger) createEntryf(level logLevel, format string, v ...interface{}) *
 
 // createEntryw creates a logEntry from the logger's context and the provided arguments.
 func (l *Logger) createEntryw(severity logLevel, msg string, kvs ...interface{}) *logEntry {
-	payload := make(map[string]interface{})
+	e := l.createEntry(severity, msg) // Creates entry with context pre-filled and processed.
+	e.applyKVs(kvs...)                // Apply and overwrite with local KVs.
 
-	logEntry := &logEntry{
-		Severity:      string(severity),
-		Message:       l.prefix + msg,
-		Trace:         l.trace,
-		SpanID:        l.spanId,
-		TraceSampled:  l.traceSampled,
-		CorrelationID: l.correlationID,
-		Labels:        l.labels,
-		Time:          jsonTime{time.Now()},
-	}
-
-	n := len(kvs)
-
-	if n%2 != 0 {
-		// confirm whether last key is string or not
-		if key, ok := kvs[n-1].(string); ok {
-			payload[key] = "KEY_WITHOUT_VALUE"
-		}
-
-		// add error information to log(playload)
-		payload["logging_error"] = "odd number of arguments received"
-
-		n--
-	}
-
-	// loop through a range guaranteed to be even
-	for i := 0; i < n; i += 2 {
-		key, ok := kvs[i].(string)
-		if !ok {
-			// skip if key is not string
-			continue
-		}
-
-		// error
-		if key == "error" {
-			if err, ok := kvs[i+1].(error); ok {
-				payload[key] = err.Error()
-			}
-			continue
-		}
-
-		// httpRequest
-		if key == "httpRequest" {
-			if req, ok := kvs[i+1].(*HTTPRequest); ok {
-				logEntry.HTTPRequest = req
-			}
-			continue
-		}
-
-		// sourceLocation
-		if key == "sourceLocation" {
-			if sl, ok := kvs[i+1].(*SourceLocation); ok {
-				logEntry.SourceLocation = sl
-			}
-			continue
-		}
-
-		payload[key] = kvs[i+1]
-	}
-
-	logEntry.Payload = payload
-
-	return logEntry
+	return e
 }
 
 // IsDebugEnabled checks if the Debug level is enabled for the logger.
@@ -538,6 +546,29 @@ func (l *Logger) WithTraceSampled(traceSampled *bool) *Logger {
 func (l *Logger) WithCorrelationID(correlationID string) *Logger {
 	newLogger := l.Clone()
 	newLogger.correlationID = correlationID
+
+	return newLogger
+}
+
+// With returns a new logger instance with the provided key-value pairs added to its context.
+// It panics if the number of arguments is odd or if a key is not a string.
+func (l *Logger) With(kvs ...interface{}) *Logger {
+	n := len(kvs)
+
+	if n%2 != 0 {
+		panic("log.With: odd number of arguments received")
+	}
+
+	newLogger := l.Clone()
+
+	for i := 0; i < n; i += 2 {
+		key, ok := kvs[i].(string)
+		if !ok {
+			panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+		}
+
+		newLogger.payload[key] = kvs[i+1]
+	}
 
 	return newLogger
 }
