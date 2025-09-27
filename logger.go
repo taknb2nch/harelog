@@ -435,88 +435,88 @@ func (l *Logger) FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) 
 
 // Debugf logs a formatted message at the Debug level.
 func (l *Logger) Debugf(format string, v ...interface{}) {
-	l.DebugfCtx(nil, format, v...)
+	l.DebugfCtx(context.Background(), format, v...)
 }
 
 // Infof logs a formatted message at the Info level.
 func (l *Logger) Infof(format string, v ...interface{}) {
-	l.InfofCtx(nil, format, v...)
+	l.InfofCtx(context.Background(), format, v...)
 }
 
 // Warnf logs a formatted message at the Warn level.
 func (l *Logger) Warnf(format string, v ...interface{}) {
-	l.WarnfCtx(nil, format, v...)
+	l.WarnfCtx(context.Background(), format, v...)
 }
 
 // Errorf logs a formatted message at the Error level.
 func (l *Logger) Errorf(format string, v ...interface{}) {
-	l.ErrorfCtx(nil, format, v...)
+	l.ErrorfCtx(context.Background(), format, v...)
 }
 
 // Criticalf logs a formatted message at the Critical level.
 func (l *Logger) Criticalf(format string, v ...interface{}) {
-	l.CriticalfCtx(nil, format, v...)
+	l.CriticalfCtx(context.Background(), format, v...)
 }
 
 // Printf logs a formatted message at the Info level, like log.Printf.
 func (l *Logger) Printf(format string, v ...interface{}) {
-	l.PrintfCtx(nil, format, v...)
+	l.PrintfCtx(context.Background(), format, v...)
 }
 
 // Print logs its arguments at the Info level, like log.Print.
 func (l *Logger) Print(v ...interface{}) {
-	l.PrintCtx(nil, v...)
+	l.PrintCtx(context.Background(), v...)
 }
 
 // Println logs its arguments at the Info level, like log.Println.
 func (l *Logger) Println(v ...interface{}) {
-	l.PrintlnCtx(nil, v...)
+	l.PrintlnCtx(context.Background(), v...)
 }
 
 // Fatalf logs a formatted message at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-	l.FatalfCtx(nil, format, v...)
+	l.FatalfCtx(context.Background(), format, v...)
 }
 
 // Fatal logs its arguments at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
-	l.FatalCtx(nil, v...)
+	l.FatalCtx(context.Background(), v...)
 }
 
 // Fatalln logs its arguments at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
-	l.FatallnCtx(nil, v...)
+	l.FatallnCtx(context.Background(), v...)
 }
 
 // Debugw logs a message at the Debug level with structured key-value pairs.
 func (l *Logger) Debugw(msg string, kvs ...interface{}) {
-	l.DebugwCtx(nil, msg, kvs...)
+	l.DebugwCtx(context.Background(), msg, kvs...)
 }
 
 // Infow logs a message at the Info level with structured key-value pairs.
 func (l *Logger) Infow(msg string, kvs ...interface{}) {
-	l.InfowCtx(nil, msg, kvs...)
+	l.InfowCtx(context.Background(), msg, kvs...)
 }
 
 // Warnw logs a message at the Warn level with structured key-value pairs.
 func (l *Logger) Warnw(msg string, kvs ...interface{}) {
-	l.WarnwCtx(nil, msg, kvs...)
+	l.WarnwCtx(context.Background(), msg, kvs...)
 }
 
 // Errorw logs a message at the Error level with structured key-value pairs.
 func (l *Logger) Errorw(msg string, kvs ...interface{}) {
-	l.ErrorwCtx(nil, msg, kvs...)
+	l.ErrorwCtx(context.Background(), msg, kvs...)
 }
 
 // Criticalw logs a message at the Critical level with structured key-value pairs.
 func (l *Logger) Criticalw(msg string, kvs ...interface{}) {
-	l.CriticalwCtx(nil, msg, kvs...)
+	l.CriticalwCtx(context.Background(), msg, kvs...)
 }
 
 // Fatalw logs a message with structured key-value pairs at the Critical level
 // and then calls os.Exit(1).
 func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
-	l.FatalwCtx(nil, msg, kvs...)
+	l.FatalwCtx(context.Background(), msg, kvs...)
 }
 
 // createEntry creates a logEntry with a pre-formatted message.
