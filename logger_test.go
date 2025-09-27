@@ -2,6 +2,7 @@ package harelog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +22,6 @@ func TestNew(t *testing.T) {
 	if l.logLevel != logLevelValueInfo {
 		t.Errorf("expected default level to be Info, got %v", l.logLevel)
 	}
-	// Test default formatter
 	if _, ok := l.formatter.(*jsonFormatter); !ok {
 		t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
 	}
@@ -483,6 +483,110 @@ func TestFatalwMethod(t *testing.T) {
 	if port, _ := entry["port"].(float64); int(port) != 5432 {
 		t.Errorf("unexpected port: got %v, want %v", port, 5432)
 	}
+}
+
+// TestCtxMethods verifies the functionality of all context-aware methods.
+func TestCtxMethods(t *testing.T) {
+	var buf bytes.Buffer
+
+	// This helper resets the buffer for each subtest.
+	setup := func() {
+		buf.Reset()
+	}
+
+	// Define a custom context key for testing, mimicking how real applications do it.
+	type contextKey string
+	const traceContextKey = contextKey("x-cloud-trace-context")
+
+	t.Run("Values are extracted from context with ProjectID", func(t *testing.T) {
+		setup()
+		// Create a logger with the Project ID configured via the new option.
+		logger := New(
+			WithOutput(&buf),
+			WithProjectID("test-project"),
+			WithTraceContextKey(traceContextKey),
+		)
+		ctx := context.WithValue(context.Background(), traceContextKey, "trace-from-ctx/span-from-ctx;o=1")
+
+		logger.InfofCtx(ctx, "message with trace")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		expectedTrace := "projects/test-project/traces/trace-from-ctx"
+		if trace, _ := entry["logging.googleapis.com/trace"].(string); trace != expectedTrace {
+			t.Errorf("expected trace %q to be extracted, got %q", expectedTrace, trace)
+		}
+		if span, _ := entry["logging.googleapis.com/spanId"].(string); span != "span-from-ctx" {
+			t.Errorf("expected spanId %q to be extracted, got %q", "span-from-ctx", span)
+		}
+	})
+
+	t.Run("Precedence: Method args > With > Context", func(t *testing.T) {
+		setup()
+		ctx := context.WithValue(context.Background(), traceContextKey, "ctx-trace/ctx-span")
+
+		// Create a child logger with a conflicting trace value.
+		loggerWithContext := New(WithOutput(&buf)).With("[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "with-trace")
+
+		// Call a ...wCtx method with another conflicting trace value.
+		loggerWithContext.InfowCtx(ctx, "testing precedence", "[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "arg-trace")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		// The value from the method argument ("arg-trace") should win.
+		expectedTrace := "arg-trace"
+		if trace, _ := entry["[logging.googleapis.com/trace](https://logging.googleapis.com/trace)"].(string); trace != expectedTrace {
+			t.Errorf("precedence failed: expected trace to be %q, got %q", expectedTrace, trace)
+		}
+	})
+
+	t.Run("Nil context behaves like non-Ctx version", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+
+		// Log with the non-Ctx version
+		logger.Warnf("message %d", 1)
+		expected := strings.TrimSpace(buf.String())
+		buf.Reset()
+
+		// Log with the Ctx version passing nil
+		logger.WarnfCtx(nil, "message %d", 1)
+		got := strings.TrimSpace(buf.String())
+
+		// We can't compare directly due to timestamp, so we check for the message part.
+		if !strings.Contains(got, `"message":"message 1"`) {
+			t.Errorf("nil context call did not produce the expected message. Got: %s", got)
+		}
+		if !strings.Contains(expected, `"message":"message 1"`) {
+			t.Errorf("non-Ctx call did not produce the expected message. Got: %s", expected)
+		}
+	})
+
+	t.Run("FatalCtx logs and exits", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		ctx := context.Background()
+
+		var exitCode int
+		originalExit := osExit
+		osExit = func(code int) { exitCode = code }
+		defer func() { osExit = originalExit }()
+
+		logger.FatalCtx(ctx, "fatal message from ctx")
+
+		if !strings.Contains(buf.String(), `"message":"fatal message from ctx"`) {
+			t.Errorf("FatalCtx did not log the correct message. Got: %s", buf.String())
+		}
+		if exitCode != 1 {
+			t.Errorf("expected os.Exit(1) to be called from FatalCtx, but exit code was %d", exitCode)
+		}
+	})
 }
 
 // TestFormatters verifies the WithFormatter option and logger's integration with formatters.
