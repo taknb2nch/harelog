@@ -61,6 +61,29 @@ var levelMap = map[logLevel]logLevelValue{
 	LogLevelAll:      logLevelValueAll,
 }
 
+func init() {
+	setupLogLevelFromEnv()
+}
+
+// setupLogLevelFromEnv reads the HARELOG_LEVEL environment variable and
+// configures the default logger's log level accordingly.
+func setupLogLevelFromEnv() {
+	levelStr := os.Getenv("HARELOG_LEVEL")
+
+	if levelStr == "" {
+		return
+	}
+
+	level, err := ParseLogLevel(levelStr)
+	if err != nil {
+		log.Printf("harelog: invalid HARELOG_LEVEL value %q, using default level", levelStr)
+
+		return
+	}
+
+	SetDefaultLogLevel(level)
+}
+
 // ParseLogLevel parses a string into a LogLevel.
 // It is case-insensitive. It returns an error if the input string is not a valid log level.
 func ParseLogLevel(levelStr string) (logLevel, error) {
