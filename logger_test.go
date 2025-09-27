@@ -27,6 +27,66 @@ func TestNew(t *testing.T) {
 	}
 }
 
+// TestSetupLogLevelFromEnv verifies that the default log level is correctly
+// configured from the HARELOG_LEVEL environment variable.
+func TestSetupLogLevelFromEnv(t *testing.T) {
+	// Save and restore the original std logger state to avoid affecting other tests.
+	originalStd := std
+	defer func() {
+		std = originalStd
+	}()
+
+	// setup helper resets std to a clean logger for each subtest
+	setup := func() {
+		std = New() // Reset to a known default state (INFO level)
+	}
+
+	t.Run("Variable not set", func(t *testing.T) {
+		setup()
+		// Ensure the variable is unset for this test.
+		t.Setenv("HARELOG_LEVEL", "")
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueInfo {
+			t.Errorf("expected level to remain default INFO, but got %v", std.logLevel)
+		}
+	})
+
+	t.Run("Valid level set", func(t *testing.T) {
+		setup()
+		// t.Setenv automatically handles restoring the original value after the test.
+		t.Setenv("HARELOG_LEVEL", "DEBUG")
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueDebug {
+			t.Errorf("expected level to be set to DEBUG, but got %v", std.logLevel)
+		}
+	})
+
+	t.Run("Invalid level set", func(t *testing.T) {
+		setup()
+		t.Setenv("HARELOG_LEVEL", "INVALID_VALUE")
+
+		// We can capture the warning log for verification if needed, but for now,
+		// we'll just check that the log level was not changed.
+		// originalLogOutput := log.Writer()
+		// defer log.SetOutput(originalLogOutput)
+		// var buf bytes.Buffer
+		// log.SetOutput(&buf)
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueInfo {
+			t.Errorf("expected level to fall back to default INFO, but got %v", std.logLevel)
+		}
+		// if !strings.Contains(buf.String(), "invalid HARELOG_LEVEL") {
+		// 	t.Error("expected a warning to be logged for an invalid level")
+		// }
+	})
+}
+
 // TestParseLogLevel tests the log level parsing function.
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
