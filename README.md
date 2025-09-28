@@ -123,6 +123,26 @@ logger.Infow("server started", "port", 8080)
 2025-09-27T08:50:00Z [INFO] server started {port=8080}
 ```
 
+### Colored Text Output
+
+The `TextFormatter` provides "smart" color-coding: it is automatically enabled when writing to an interactive terminal (TTY) and disabled when writing to a file or pipe. You can also control it explicitly.
+
+```go
+// Force color to be enabled or disabled
+formatter := harelog.NewTextFormatter(
+    harelog.WithColor(true), // or false
+)
+logger := harelog.New(harelog.WithFormatter(formatter))
+```
+
+### Setting the Default Log Level via Environment Variable
+
+You can control the default logger's verbosity without changing code by setting the `HARELOG_LEVEL` environment variable.
+
+```bash
+HARELOG_LEVEL=debug go run main.go
+```
+
 ---
 
 ## Special Fields
