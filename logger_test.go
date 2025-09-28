@@ -2,6 +2,7 @@ package harelog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +22,69 @@ func TestNew(t *testing.T) {
 	if l.logLevel != logLevelValueInfo {
 		t.Errorf("expected default level to be Info, got %v", l.logLevel)
 	}
-	// Test default formatter
 	if _, ok := l.formatter.(*jsonFormatter); !ok {
 		t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
 	}
+}
+
+// TestSetupLogLevelFromEnv verifies that the default log level is correctly
+// configured from the HARELOG_LEVEL environment variable.
+func TestSetupLogLevelFromEnv(t *testing.T) {
+	// Save and restore the original std logger state to avoid affecting other tests.
+	originalStd := std
+	defer func() {
+		std = originalStd
+	}()
+
+	// setup helper resets std to a clean logger for each subtest
+	setup := func() {
+		std = New() // Reset to a known default state (INFO level)
+	}
+
+	t.Run("Variable not set", func(t *testing.T) {
+		setup()
+		// Ensure the variable is unset for this test.
+		t.Setenv("HARELOG_LEVEL", "")
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueInfo {
+			t.Errorf("expected level to remain default INFO, but got %v", std.logLevel)
+		}
+	})
+
+	t.Run("Valid level set", func(t *testing.T) {
+		setup()
+		// t.Setenv automatically handles restoring the original value after the test.
+		t.Setenv("HARELOG_LEVEL", "DEBUG")
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueDebug {
+			t.Errorf("expected level to be set to DEBUG, but got %v", std.logLevel)
+		}
+	})
+
+	t.Run("Invalid level set", func(t *testing.T) {
+		setup()
+		t.Setenv("HARELOG_LEVEL", "INVALID_VALUE")
+
+		// We can capture the warning log for verification if needed, but for now,
+		// we'll just check that the log level was not changed.
+		// originalLogOutput := log.Writer()
+		// defer log.SetOutput(originalLogOutput)
+		// var buf bytes.Buffer
+		// log.SetOutput(&buf)
+
+		setupLogLevelFromEnv()
+
+		if std.logLevel != logLevelValueInfo {
+			t.Errorf("expected level to fall back to default INFO, but got %v", std.logLevel)
+		}
+		// if !strings.Contains(buf.String(), "invalid HARELOG_LEVEL") {
+		// 	t.Error("expected a warning to be logged for an invalid level")
+		// }
+	})
 }
 
 // TestParseLogLevel tests the log level parsing function.
@@ -106,6 +166,138 @@ func TestWithMethods(t *testing.T) {
 	if !strings.Contains(output, `"user":"test"`) {
 		t.Errorf("output should contain labels, got: %s", output)
 	}
+}
+
+// TestWithMethod verifies the functionality of the contextual logger.
+func TestWithMethod(t *testing.T) {
+	var buf bytes.Buffer
+
+	// This helper resets the buffer for each subtest.
+	setup := func() {
+		buf.Reset()
+	}
+
+	t.Run("Context is added to logs", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With("service", "api", "requestID", "abc-123")
+
+		childLogger.Infof("request received")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if service, _ := entry["service"].(string); service != "api" {
+			t.Errorf("expected service to be 'api', got %q", service)
+		}
+		if reqID, _ := entry["requestID"].(string); reqID != "abc-123" {
+			t.Errorf("expected requestID to be 'abc-123', got %q", reqID)
+		}
+	})
+
+	t.Run("Formatted logs include context", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		err := errors.New("context error")
+		childLogger := logger.With("error", err, "requestID", "xyz-789")
+
+		childLogger.Warnf("Operation failed for user %d", 123)
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if errMsg, _ := entry["error"].(string); errMsg != "context error" {
+			t.Errorf("expected special key 'error' to be processed, got %q", errMsg)
+		}
+		if reqID, _ := entry["requestID"].(string); reqID != "xyz-789" {
+			t.Errorf("expected requestID to be 'xyz-789', got %q", reqID)
+		}
+		if msg, _ := entry["message"].(string); msg != "Operation failed for user 123" {
+			t.Errorf("unexpected message: got %q", msg)
+		}
+	})
+
+	t.Run("Special keys with wrong type are kept at top level", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With(
+			"httpRequest", "this is not a request object",
+			"sourceLocation", 12345,
+		)
+
+		childLogger.Infof("testing wrong types")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		// The key should exist at the top level, but its value will be the raw (incorrect) type.
+		if val, ok := entry["httpRequest"].(string); !ok || val != "this is not a request object" {
+			t.Errorf("expected httpRequest to be a string in the output, got %T with value %v", entry["httpRequest"], entry["httpRequest"])
+		}
+		if val, ok := entry["sourceLocation"].(float64); !ok || int(val) != 12345 {
+			t.Errorf("expected sourceLocation to be a number in the output, got %T with value %v", entry["sourceLocation"], entry["sourceLocation"])
+		}
+	})
+
+	t.Run("With is immutable", func(t *testing.T) {
+		setup()
+		parentLogger := New(WithOutput(&buf))
+		_ = parentLogger.With("temporary", "value")
+
+		parentLogger.Infof("parent log")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if _, exists := entry["temporary"]; exists {
+			t.Error("parent logger should not be mutated by With")
+		}
+	})
+
+	t.Run("Local scope overrides context", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		childLogger := logger.With("status", "pending")
+
+		childLogger.Infow("request completed", "status", "success")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if status, _ := entry["status"].(string); status != "success" {
+			t.Errorf("expected status to be 'success' (overridden), but got %q", status)
+		}
+	})
+
+	t.Run("Panics on odd number of arguments", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected With to panic with an odd number of arguments, but it did not")
+			}
+		}()
+		logger := New()
+		_ = logger.With("key1", "value1", "key2")
+	})
+
+	t.Run("Panics on non-string key", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected With to panic with a non-string key, but it did not")
+			}
+		}()
+		logger := New()
+		_ = logger.With(123, "value1")
+	})
 }
 
 // TestStructuredOutput verifies the JSON output of Infow.
@@ -351,6 +543,110 @@ func TestFatalwMethod(t *testing.T) {
 	if port, _ := entry["port"].(float64); int(port) != 5432 {
 		t.Errorf("unexpected port: got %v, want %v", port, 5432)
 	}
+}
+
+// TestCtxMethods verifies the functionality of all context-aware methods.
+func TestCtxMethods(t *testing.T) {
+	var buf bytes.Buffer
+
+	// This helper resets the buffer for each subtest.
+	setup := func() {
+		buf.Reset()
+	}
+
+	// Define a custom context key for testing, mimicking how real applications do it.
+	type contextKey string
+	const traceContextKey = contextKey("x-cloud-trace-context")
+
+	t.Run("Values are extracted from context with ProjectID", func(t *testing.T) {
+		setup()
+		// Create a logger with the Project ID configured via the new option.
+		logger := New(
+			WithOutput(&buf),
+			WithProjectID("test-project"),
+			WithTraceContextKey(traceContextKey),
+		)
+		ctx := context.WithValue(context.Background(), traceContextKey, "trace-from-ctx/span-from-ctx;o=1")
+
+		logger.InfofCtx(ctx, "message with trace")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		expectedTrace := "projects/test-project/traces/trace-from-ctx"
+		if trace, _ := entry["logging.googleapis.com/trace"].(string); trace != expectedTrace {
+			t.Errorf("expected trace %q to be extracted, got %q", expectedTrace, trace)
+		}
+		if span, _ := entry["logging.googleapis.com/spanId"].(string); span != "span-from-ctx" {
+			t.Errorf("expected spanId %q to be extracted, got %q", "span-from-ctx", span)
+		}
+	})
+
+	t.Run("Precedence: Method args > With > Context", func(t *testing.T) {
+		setup()
+		ctx := context.WithValue(context.Background(), traceContextKey, "ctx-trace/ctx-span")
+
+		// Create a child logger with a conflicting trace value.
+		loggerWithContext := New(WithOutput(&buf)).With("[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "with-trace")
+
+		// Call a ...wCtx method with another conflicting trace value.
+		loggerWithContext.InfowCtx(ctx, "testing precedence", "[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "arg-trace")
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		// The value from the method argument ("arg-trace") should win.
+		expectedTrace := "arg-trace"
+		if trace, _ := entry["[logging.googleapis.com/trace](https://logging.googleapis.com/trace)"].(string); trace != expectedTrace {
+			t.Errorf("precedence failed: expected trace to be %q, got %q", expectedTrace, trace)
+		}
+	})
+
+	t.Run("Nil context behaves like non-Ctx version", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+
+		// Log with the non-Ctx version
+		logger.Warnf("message %d", 1)
+		expected := strings.TrimSpace(buf.String())
+		buf.Reset()
+
+		// Log with the Ctx version passing nil
+		logger.WarnfCtx(nil, "message %d", 1)
+		got := strings.TrimSpace(buf.String())
+
+		// We can't compare directly due to timestamp, so we check for the message part.
+		if !strings.Contains(got, `"message":"message 1"`) {
+			t.Errorf("nil context call did not produce the expected message. Got: %s", got)
+		}
+		if !strings.Contains(expected, `"message":"message 1"`) {
+			t.Errorf("non-Ctx call did not produce the expected message. Got: %s", expected)
+		}
+	})
+
+	t.Run("FatalCtx logs and exits", func(t *testing.T) {
+		setup()
+		logger := New(WithOutput(&buf))
+		ctx := context.Background()
+
+		var exitCode int
+		originalExit := osExit
+		osExit = func(code int) { exitCode = code }
+		defer func() { osExit = originalExit }()
+
+		logger.FatalCtx(ctx, "fatal message from ctx")
+
+		if !strings.Contains(buf.String(), `"message":"fatal message from ctx"`) {
+			t.Errorf("FatalCtx did not log the correct message. Got: %s", buf.String())
+		}
+		if exitCode != 1 {
+			t.Errorf("expected os.Exit(1) to be called from FatalCtx, but exit code was %d", exitCode)
+		}
+	})
 }
 
 // TestFormatters verifies the WithFormatter option and logger's integration with formatters.

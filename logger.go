@@ -4,6 +4,7 @@
 package harelog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,6 +59,29 @@ var levelMap = map[logLevel]logLevelValue{
 	LogLevelInfo:     logLevelValueInfo,
 	LogLevelDebug:    logLevelValueDebug,
 	LogLevelAll:      logLevelValueAll,
+}
+
+func init() {
+	setupLogLevelFromEnv()
+}
+
+// setupLogLevelFromEnv reads the HARELOG_LEVEL environment variable and
+// configures the default logger's log level accordingly.
+func setupLogLevelFromEnv() {
+	levelStr := os.Getenv("HARELOG_LEVEL")
+
+	if levelStr == "" {
+		return
+	}
+
+	level, err := ParseLogLevel(levelStr)
+	if err != nil {
+		log.Printf("harelog: invalid HARELOG_LEVEL value %q, using default level", levelStr)
+
+		return
+	}
+
+	SetDefaultLogLevel(level)
 }
 
 // ParseLogLevel parses a string into a LogLevel.
@@ -120,6 +144,53 @@ type logEntry struct {
 	Payload map[string]interface{} `json:"-"`
 }
 
+// applyKVs applies key-value pairs to a log entry, handling special keys.
+func (e *logEntry) applyKVs(kvs ...interface{}) {
+	n := len(kvs)
+	if n%2 != 0 {
+		// confirm whether last key is string or not
+		if key, ok := kvs[n-1].(string); ok {
+			e.Payload[key] = "KEY_WITHOUT_VALUE"
+		}
+
+		e.Payload["logging_error"] = "odd number of arguments received"
+
+		n--
+	}
+
+	for i := 0; i < n; i += 2 {
+		key, ok := kvs[i].(string)
+		if !ok {
+			// For simplicity in this helper, we skip non-string keys.
+			// The With method will panic on them, ensuring safety.
+			continue
+		}
+
+		switch key {
+		case "error":
+			if err, ok := kvs[i+1].(error); ok {
+				e.Payload[key] = err.Error()
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		case "httpRequest":
+			if req, ok := kvs[i+1].(*HTTPRequest); ok {
+				e.HTTPRequest = req
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		case "sourceLocation":
+			if sl, ok := kvs[i+1].(*SourceLocation); ok {
+				e.SourceLocation = sl
+			} else {
+				e.Payload[key] = kvs[i+1]
+			}
+		default:
+			e.Payload[key] = kvs[i+1]
+		}
+	}
+}
+
 // --- Logger ---
 
 // Logger is a structured logger that provides leveled logging.
@@ -133,6 +204,11 @@ type Logger struct {
 	logLevel      logLevelValue
 	prefix        string
 	correlationID string
+	projectID     string
+
+	payload map[string]interface{}
+
+	traceContextKey interface{}
 
 	formatter Formatter
 }
@@ -148,7 +224,9 @@ func New(opts ...Option) *Logger {
 		logLevel:      logLevelValueInfo,
 		prefix:        "",
 		correlationID: "",
+		projectID:     "",
 		labels:        make(map[string]string),
+		payload:       make(map[string]interface{}),
 		formatter:     NewJSONFormatter(),
 	}
 
@@ -167,179 +245,312 @@ func Clone() *Logger {
 // Clone creates a new copy of the logger.
 func (l *Logger) Clone() *Logger {
 	newLogger := &Logger{
-		out:           l.out,
-		trace:         l.trace,
-		spanId:        l.spanId,
-		traceSampled:  l.traceSampled,
-		logLevel:      l.logLevel,
-		prefix:        l.prefix,
-		correlationID: l.correlationID,
-		labels:        make(map[string]string),
-		formatter:     l.formatter,
+		out:             l.out,
+		trace:           l.trace,
+		spanId:          l.spanId,
+		traceSampled:    l.traceSampled,
+		logLevel:        l.logLevel,
+		prefix:          l.prefix,
+		correlationID:   l.correlationID,
+		projectID:       l.projectID,
+		labels:          make(map[string]string),
+		payload:         make(map[string]interface{}),
+		traceContextKey: l.traceContextKey,
+		formatter:       l.formatter,
 	}
 
 	for k, v := range l.labels {
 		newLogger.labels[k] = v
 	}
 
+	for k, v := range l.payload {
+		newLogger.payload[k] = v
+	}
+
 	return newLogger
+}
+
+// DebugfCtx logs a formatted message at the Debug level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) DebugfCtx(ctx context.Context, format string, v ...interface{}) {
+	if !l.IsDebugEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelDebug, fmt.Sprintf(format, v...)))
+}
+
+// InfofCtx logs a formatted message at the Info level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) InfofCtx(ctx context.Context, format string, v ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelInfo, fmt.Sprintf(format, v...)))
+}
+
+// WarnfCtx logs a formatted message at the Warn level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) WarnfCtx(ctx context.Context, format string, v ...interface{}) {
+	if !l.IsWarnEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelWarn, fmt.Sprintf(format, v...)))
+}
+
+// ErrorfCtx logs a formatted message at the Error level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) ErrorfCtx(ctx context.Context, format string, v ...interface{}) {
+	if !l.IsErrorEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelError, fmt.Sprintf(format, v...)))
+}
+
+// CriticalfCtx logs a formatted message at the Critical level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) CriticalfCtx(ctx context.Context, format string, v ...interface{}) {
+	if !l.IsCriticalEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelCritical, fmt.Sprintf(format, v...)))
+}
+
+// PrintfCtx logs a formatted message at the Info level, like log.Printf.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) PrintfCtx(ctx context.Context, format string, v ...interface{}) {
+	l.InfofCtx(ctx, format, v...)
+}
+
+// PrintCtx logs its arguments at the Info level, like log.Print.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) PrintCtx(ctx context.Context, v ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelInfo, sprintMessage(v...)))
+}
+
+// PrintlnCtx logs its arguments at the Info level, like log.Println.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) PrintlnCtx(ctx context.Context, v ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelInfo, sprintlnMessage(v...)))
+}
+
+// FatalCtxf logs a formatted message at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntry(ctx, LogLevelCritical, fmt.Sprintf(format, v...)))
+	}
+
+	osExit(1)
+}
+
+// FatalCtx logs its arguments at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntry(ctx, LogLevelCritical, sprintMessage(v...)))
+	}
+
+	osExit(1)
+}
+
+// FatallnCtx logs its arguments at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) FatallnCtx(ctx context.Context, v ...interface{}) {
+	if l.IsCriticalEnabled() {
+		l.print(l.createEntry(ctx, LogLevelCritical, sprintlnMessage(v...)))
+	}
+
+	osExit(1)
+}
+
+// DebugwCtx logs a formatted message at the Debug level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) DebugwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsDebugEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelDebug, msg, kvs...))
+}
+
+// InfowCtx logs a formatted message at the Info level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) InfowCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsInfoEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelInfo, msg, kvs...))
+}
+
+// WarnwCtx logs a formatted message at the Warn level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) WarnwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsWarnEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelWarn, msg, kvs...))
+}
+
+// ErrorwCtx logs a formatted message at the Error level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) ErrorwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsErrorEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelError, msg, kvs...))
+}
+
+// CriticalwCtx logs a formatted message at the Critical level.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) CriticalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsCriticalEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelCritical, msg, kvs...))
+}
+
+// FatalwCtx logs a message with structured key-value pairs at the Critical level
+// and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func (l *Logger) FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	if !l.IsCriticalEnabled() {
+		return
+	}
+
+	l.print(l.createEntry(ctx, LogLevelCritical, msg, kvs...))
+
+	osExit(1)
 }
 
 // Debugf logs a formatted message at the Debug level.
 func (l *Logger) Debugf(format string, v ...interface{}) {
-	if !l.IsDebugEnabled() {
-		return
-	}
-
-	l.print(l.createEntryf(LogLevelDebug, format, v...))
+	l.DebugfCtx(context.Background(), format, v...)
 }
 
 // Infof logs a formatted message at the Info level.
 func (l *Logger) Infof(format string, v ...interface{}) {
-	if !l.IsInfoEnabled() {
-		return
-	}
-
-	l.print(l.createEntryf(LogLevelInfo, format, v...))
+	l.InfofCtx(context.Background(), format, v...)
 }
 
 // Warnf logs a formatted message at the Warn level.
 func (l *Logger) Warnf(format string, v ...interface{}) {
-	if !l.IsWarnEnabled() {
-		return
-	}
-
-	l.print(l.createEntryf(LogLevelWarn, format, v...))
+	l.WarnfCtx(context.Background(), format, v...)
 }
 
 // Errorf logs a formatted message at the Error level.
 func (l *Logger) Errorf(format string, v ...interface{}) {
-	if !l.IsErrorEnabled() {
-		return
-	}
-
-	l.print(l.createEntryf(LogLevelError, format, v...))
+	l.ErrorfCtx(context.Background(), format, v...)
 }
 
 // Criticalf logs a formatted message at the Critical level.
 func (l *Logger) Criticalf(format string, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
-	}
-
-	l.print(l.createEntryf(LogLevelCritical, format, v...))
+	l.CriticalfCtx(context.Background(), format, v...)
 }
 
 // Printf logs a formatted message at the Info level, like log.Printf.
 func (l *Logger) Printf(format string, v ...interface{}) {
-	l.Infof(format, v...)
+	l.PrintfCtx(context.Background(), format, v...)
 }
 
 // Print logs its arguments at the Info level, like log.Print.
 func (l *Logger) Print(v ...interface{}) {
-	if !l.IsInfoEnabled() {
-		return
-	}
-
-	l.print(l.createEntry(LogLevelInfo, sprintMessage(v...)))
+	l.PrintCtx(context.Background(), v...)
 }
 
 // Println logs its arguments at the Info level, like log.Println.
 func (l *Logger) Println(v ...interface{}) {
-	if !l.IsInfoEnabled() {
-		return
-	}
-
-	l.print(l.createEntry(LogLevelInfo, sprintlnMessage(v...)))
+	l.PrintlnCtx(context.Background(), v...)
 }
 
 // Fatalf logs a formatted message at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntryf(LogLevelCritical, format, v...))
-	}
-
-	osExit(1)
+	l.FatalfCtx(context.Background(), format, v...)
 }
 
 // Fatal logs its arguments at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntry(LogLevelCritical, sprintMessage(v...)))
-	}
-
-	osExit(1)
+	l.FatalCtx(context.Background(), v...)
 }
 
 // Fatalln logs its arguments at the Critical level and then calls os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntry(LogLevelCritical, sprintlnMessage(v...)))
-	}
-
-	osExit(1)
+	l.FatallnCtx(context.Background(), v...)
 }
 
 // Debugw logs a message at the Debug level with structured key-value pairs.
 func (l *Logger) Debugw(msg string, kvs ...interface{}) {
-	if !l.IsDebugEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelDebug, msg, kvs...))
+	l.DebugwCtx(context.Background(), msg, kvs...)
 }
 
 // Infow logs a message at the Info level with structured key-value pairs.
 func (l *Logger) Infow(msg string, kvs ...interface{}) {
-	if !l.IsInfoEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelInfo, msg, kvs...))
+	l.InfowCtx(context.Background(), msg, kvs...)
 }
 
 // Warnw logs a message at the Warn level with structured key-value pairs.
 func (l *Logger) Warnw(msg string, kvs ...interface{}) {
-	if !l.IsWarnEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelWarn, msg, kvs...))
+	l.WarnwCtx(context.Background(), msg, kvs...)
 }
 
 // Errorw logs a message at the Error level with structured key-value pairs.
 func (l *Logger) Errorw(msg string, kvs ...interface{}) {
-	if !l.IsErrorEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelError, msg, kvs...))
+	l.ErrorwCtx(context.Background(), msg, kvs...)
 }
 
 // Criticalw logs a message at the Critical level with structured key-value pairs.
 func (l *Logger) Criticalw(msg string, kvs ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
+	l.CriticalwCtx(context.Background(), msg, kvs...)
 }
 
 // Fatalw logs a message with structured key-value pairs at the Critical level
 // and then calls os.Exit(1).
 func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
-	}
-
-	l.print(l.createEntryw(LogLevelCritical, msg, kvs...))
-
-	osExit(1)
+	l.FatalwCtx(context.Background(), msg, kvs...)
 }
 
 // createEntry creates a logEntry with a pre-formatted message.
-func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
-	return &logEntry{
+// func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
+
+// createEntry is the single, central helper for creating log entries.
+// It accepts a context (which can be nil) and correctly applies values with the
+// precedence: method args > logger context > context.Context.
+func (l *Logger) createEntry(ctx context.Context, level logLevel, msg string, kvs ...interface{}) *logEntry {
+	// 1. Create the base entry.
+	e := &logEntry{
 		Severity:      string(level),
 		Message:       l.prefix + msg,
 		Trace:         l.trace,
@@ -348,81 +559,42 @@ func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
 		CorrelationID: l.correlationID,
 		Labels:        l.labels,
 		Time:          jsonTime{time.Now()},
-	}
-}
-
-// createEntryf creates a logEntry by formatting a message.
-func (l *Logger) createEntryf(level logLevel, format string, v ...interface{}) *logEntry {
-	return l.createEntry(level, fmt.Sprintf(format, v...))
-}
-
-// createEntryw creates a logEntry from the logger's context and the provided arguments.
-func (l *Logger) createEntryw(severity logLevel, msg string, kvs ...interface{}) *logEntry {
-	payload := make(map[string]interface{})
-
-	logEntry := &logEntry{
-		Severity:      string(severity),
-		Message:       l.prefix + msg,
-		Trace:         l.trace,
-		SpanID:        l.spanId,
-		TraceSampled:  l.traceSampled,
-		CorrelationID: l.correlationID,
-		Labels:        l.labels,
-		Time:          jsonTime{time.Now()},
+		Payload:       make(map[string]interface{}, len(l.payload)),
 	}
 
-	n := len(kvs)
+	// 2. Apply values from context.Context (lowest precedence).
+	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {
+		if traceHeader, ok := ctx.Value(l.traceContextKey).(string); ok {
+			parts := strings.Split(traceHeader, "/")
 
-	if n%2 != 0 {
-		// confirm whether last key is string or not
-		if key, ok := kvs[n-1].(string); ok {
-			payload[key] = "KEY_WITHOUT_VALUE"
-		}
-
-		// add error information to log(playload)
-		payload["logging_error"] = "odd number of arguments received"
-
-		n--
-	}
-
-	// loop through a range guaranteed to be even
-	for i := 0; i < n; i += 2 {
-		key, ok := kvs[i].(string)
-		if !ok {
-			// skip if key is not string
-			continue
-		}
-
-		// error
-		if key == "error" {
-			if err, ok := kvs[i+1].(error); ok {
-				payload[key] = err.Error()
+			if len(parts) > 0 && e.Trace == "" {
+				e.Trace = fmt.Sprintf("projects/%s/traces/%s", l.projectID, parts[0])
 			}
-			continue
-		}
 
-		// httpRequest
-		if key == "httpRequest" {
-			if req, ok := kvs[i+1].(*HTTPRequest); ok {
-				logEntry.HTTPRequest = req
+			if len(parts) > 1 && e.SpanID == "" {
+				spanParts := strings.Split(parts[1], ";")
+				e.SpanID = spanParts[0]
 			}
-			continue
 		}
-
-		// sourceLocation
-		if key == "sourceLocation" {
-			if sl, ok := kvs[i+1].(*SourceLocation); ok {
-				logEntry.SourceLocation = sl
-			}
-			continue
-		}
-
-		payload[key] = kvs[i+1]
 	}
 
-	logEntry.Payload = payload
+	// 3. Apply contextual fields from the logger (With method).
+	if len(l.payload) > 0 {
+		contextKVs := make([]interface{}, 0, len(l.payload)*2)
 
-	return logEntry
+		for k, v := range l.payload {
+			contextKVs = append(contextKVs, k, v)
+		}
+
+		e.applyKVs(contextKVs...)
+	}
+
+	// 4. Apply key-value pairs from the specific log call (highest precedence).
+	if len(kvs) > 0 {
+		e.applyKVs(kvs...)
+	}
+
+	return e
 }
 
 // IsDebugEnabled checks if the Debug level is enabled for the logger.
@@ -542,6 +714,29 @@ func (l *Logger) WithCorrelationID(correlationID string) *Logger {
 	return newLogger
 }
 
+// With returns a new logger instance with the provided key-value pairs added to its context.
+// It panics if the number of arguments is odd or if a key is not a string.
+func (l *Logger) With(kvs ...interface{}) *Logger {
+	n := len(kvs)
+
+	if n%2 != 0 {
+		panic("log.With: odd number of arguments received")
+	}
+
+	newLogger := l.Clone()
+
+	for i := 0; i < n; i += 2 {
+		key, ok := kvs[i].(string)
+		if !ok {
+			panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+		}
+
+		newLogger.payload[key] = kvs[i+1]
+	}
+
+	return newLogger
+}
+
 // SetDefaultLabels sets labels for the default logger.
 // These labels will be included in all logs from the default logger.
 func SetDefaultLabels(labels map[string]string) {
@@ -642,6 +837,177 @@ func IsCriticalEnabled() bool {
 	defer stdMutex.RUnlock()
 
 	return std.IsCriticalEnabled()
+}
+
+// DebugfCtx logs a formatted message at the Debug level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func DebugfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.DebugfCtx(ctx, format, v...)
+}
+
+// InfofCtx logs a formatted message at the Info level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func InfofCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.InfofCtx(ctx, format, v...)
+}
+
+// WarnfCtx logs a formatted message at the Warn level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func WarnfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.WarnfCtx(ctx, format, v...)
+}
+
+// ErrorfCtx logs a formatted message at the Error level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func ErrorfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.ErrorfCtx(ctx, format, v...)
+}
+
+// CriticalfCtx logs a formatted message at the Critical level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func CriticalfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.CriticalfCtx(ctx, format, v...)
+}
+
+// PrintfCtx logs a formatted message at the Info level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func PrintfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.PrintfCtx(ctx, format, v...)
+}
+
+// PrintCtx logs its arguments at the Info level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func PrintCtx(ctx context.Context, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.PrintCtx(ctx, v...)
+}
+
+// PrintlnCtx logs its arguments at the Info level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func PrintlnCtx(ctx context.Context, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.PrintlnCtx(ctx, v...)
+}
+
+// FatalfCtx logs a formatted message at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func FatalfCtx(ctx context.Context, format string, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.FatalfCtx(ctx, format, v...)
+}
+
+// FatalCtx logs its arguments at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func FatalCtx(ctx context.Context, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.FatalCtx(ctx, v...)
+}
+
+// FatallnCtx logs its arguments at the Critical level and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func FatallnCtx(ctx context.Context, v ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.FatallnCtx(ctx, v...)
+}
+
+// DebugwCtx logs a message at the Debug level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func DebugwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.DebugwCtx(ctx, msg, kvs...)
+}
+
+// InfowCtx logs a message at the Info level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func InfowCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.InfowCtx(ctx, msg, kvs...)
+}
+
+// WarnwCtx logs a message at the Warn level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func WarnwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.WarnwCtx(ctx, msg, kvs...)
+}
+
+// ErrorwCtx logs a message at the Error level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func ErrorwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.ErrorwCtx(ctx, msg, kvs...)
+}
+
+// CriticalwCtx logs a message at the Critical level using the default logger.
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func CriticalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.CriticalwCtx(ctx, msg, kvs...)
+}
+
+// FatalwCtx logs a message with structured key-value pairs at the Critical level
+// using the default logger and then calls os.Exit(1).
+// It extracts values from the provided context, such as Google Cloud Trace identifiers,
+// and includes them in the log entry.
+func FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
+	stdMutex.RLock()
+	defer stdMutex.RUnlock()
+
+	std.FatalwCtx(ctx, msg, kvs...)
 }
 
 // Debugf logs a formatted message at the Debug level using the default logger.
@@ -843,5 +1209,19 @@ func WithOutput(w io.Writer) Option {
 		if w != nil {
 			l.out = w
 		}
+	}
+}
+
+// WithProjectID sets the Google Cloud Project ID to be used for formatting trace identifiers.
+func WithProjectID(id string) Option {
+	return func(l *Logger) {
+		l.projectID = id
+	}
+}
+
+// WithTraceContextKey sets the key used to extract Google Cloud Trace data from a context.Context.
+func WithTraceContextKey(key interface{}) Option {
+	return func(l *Logger) {
+		l.traceContextKey = key
 	}
 }
