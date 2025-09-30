@@ -146,13 +146,58 @@ func (f *textFormatter) Format(e *logEntry) ([]byte, error) {
 	// Message
 	b.WriteString(strings.TrimRight(e.Message, "\n"))
 
-	// Add payload only if it exists.
-	if len(e.Payload) > 0 {
+	// Aggregate all structured data into a single map
+	fields := make(map[string]interface{})
+
+	// Copy payload fields first
+	for k, v := range e.Payload {
+		fields[k] = v
+	}
+
+	// Add special fields if they exist and are not already in the payload
+	if e.SourceLocation != nil {
+		if _, ok := fields["sourceLocation"]; !ok {
+			// Format source location for readability
+			fields["source"] = fmt.Sprintf("%s:%d", e.SourceLocation.File, e.SourceLocation.Line)
+		}
+	}
+
+	if e.Trace != "" {
+		fields["trace"] = e.Trace
+	}
+
+	if e.SpanID != "" {
+		fields["spanId"] = e.SpanID
+	}
+
+	if e.CorrelationID != "" {
+		fields["correlationId"] = e.CorrelationID
+	}
+
+	for k, v := range e.Labels {
+		fields[fmt.Sprintf("label.%s", k)] = v // Prefix to avoid key collisions
+	}
+
+	if e.HTTPRequest != nil {
+		// Extract the most useful parts of the HTTP request
+		if e.HTTPRequest.RequestMethod != "" {
+			fields["http.method"] = e.HTTPRequest.RequestMethod
+		}
+		if e.HTTPRequest.Status != 0 {
+			fields["http.status"] = e.HTTPRequest.Status
+		}
+		if e.HTTPRequest.RequestURL != "" {
+			fields["http.url"] = e.HTTPRequest.RequestURL
+		}
+	}
+
+	// // Add payload only if it exists.
+	if len(fields) > 0 {
 		b.WriteString(" {")
 
-		keys := make([]string, 0, len(e.Payload))
+		keys := make([]string, 0, len(fields))
 
-		for k := range e.Payload {
+		for k := range fields {
 			keys = append(keys, k)
 		}
 
@@ -167,7 +212,7 @@ func (f *textFormatter) Format(e *logEntry) ([]byte, error) {
 			b.WriteString("=")
 
 			// Handle strings and other types differently for quoting.
-			val := e.Payload[k]
+			val := fields[k]
 
 			if s, ok := val.(string); ok {
 				b.WriteString(fmt.Sprintf("%q", s))
