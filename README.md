@@ -1,6 +1,6 @@
 # harelog [![Go](https://github.com/taknb2nch/harelog/actions/workflows/go.yaml/badge.svg?branch=main)](https://github.com/taknb2nch/harelog/actions/workflows/go.yaml)
 
-A simple and flexible Go logger for Google Cloud, with powerful context handling.
+A simple and flexible Go logger for Google Cloud, with powerful context handling and developer-friendly output.
 
 ---
 
@@ -34,7 +34,7 @@ harelog.Infow("User logged in",
 )
 ```
 
-**Example Output:**
+**Example Output (JSON):**
 
 ```json
 {"message":"Server is starting...\n","severity":"INFO","timestamp":"..."}
@@ -44,14 +44,13 @@ harelog.Infow("User logged in",
 
 ### Adding Context with the `With` Method (Child Loggers)
 
-You can create a contextual logger (or "child logger") that carries a predefined set of key-value pairs. This is extremely useful for request-scoped logging, as you don't need to repeat fields like a `requestID` in every log call.
+You can create a contextual logger (or "child logger") that carries a predefined set of key-value pairs. This is extremely useful for request-scoped logging.
 
 ```go
 var logger = harelog.New() // Your base logger
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
     // Create a new child logger with context for this specific request.
-    // The base logger is not modified.
     reqLogger := logger.With("requestID", "abc-123", "remoteAddr", r.RemoteAddr)
 
     reqLogger.Infof("request received")
@@ -59,36 +58,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-**Example Output from `reqLogger`:**
+### Logging with `context.Context` (`...Ctx` methods)
 
-The `requestID` and `remoteAddr` fields are automatically added to all logs.
-
-```json
-{"message":"request received","severity":"INFO","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
-{"message":"user authenticated","severity":"INFO","userID":"user-456","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
-```
-
-### Automatic Tracing with `context.Context` (`...Ctx` methods)
-
-For seamless integration with distributed tracing systems like Google Cloud Trace, you can use the `...Ctx` variants of the logging methods. `harelog` can automatically extract trace information from a `context.Context`.
-
-#### 1. Configuration
-
-First, configure your logger with your Google Cloud Project ID and the context key your application uses to store the trace header.
-
-```go
-// In your application's setup (e.g., main.go)
-const frameworkTraceKey = "x-cloud-trace-context" 
-
-logger := harelog.New(
-    harelog.WithProjectID("my-gcp-project-id"),
-    harelog.WithTraceContextKey(frameworkTraceKey),
-)
-```
-
-#### 2. Logging with Context
-
-Now, simply pass the request's context to any `...Ctx` method.
+For integration with tracing systems, you can use the `...Ctx` variants of the logging methods. `harelog` can automatically extract trace information from a `context.Context` (see Configuration section for setup).
 
 ```go
 func handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -97,17 +69,40 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-**Example Output:**
-
-```json
-{"message":"handling request","severity":"INFO","logging.googleapis.com/trace":"projects/my-gcp-project-id/traces/...", ...}
-```
-
 ---
 
-## Customizing Output with Formatters
+## Configuration & Features
 
-By default, `harelog` outputs logs in JSON format. You can easily switch to a human-readable text format for local development using the `WithFormatter` option.
+`harelog` can be configured using functional options at initialization.
+
+### Automatic Source Code Location
+
+For easier debugging, `harelog` can automatically log the file and line number of the log call site. This feature has a performance cost and is configurable via different modes.
+
+```go
+// In production, you might only want source location for errors.
+logger := harelog.New(
+    harelog.WithAutoSource(harelog.SourceLocationModeErrorOrAbove),
+)
+
+logger.Infof("This will NOT have source info.")
+logger.Errorf("This WILL have source info.")
+```
+
+**Example Verification:**
+
+The accuracy of this feature is best verified by running a sample application. For a complete, runnable example, please see the `examples/main.go` file in this repository.
+
+*Expected Output from the example:*
+The `sourceLocation` will correctly point to the file and line number of the call site.
+
+```json
+{"message":"...","severity":"ERROR","logging.googleapis.com/sourceLocation":{"file":"/path/to/your/project/examples/main.go","line":42,...}}
+```
+
+### Output Format (Formatter)
+
+By default, logs are in JSON format. For local development, you can switch to a human-readable text format with "smart" color-coding.
 
 ```go
 // Use the WithFormatter option to switch to the text logger
@@ -117,30 +112,32 @@ logger := harelog.New(
 logger.Infow("server started", "port", 8080)
 ```
 
-**Example Text Output:**
+**Example Text Output (in a terminal):**
 
 ```
-2025-09-27T08:50:00Z [INFO] server started {port=8080}
+2025-09-30T22:00:00Z [INFO] server started {port=8080}
 ```
+(Note: The `[INFO]` part will be colorized in a supported terminal.)
 
-### Colored Text Output
+### Default Log Level via Environment Variable
 
-The `TextFormatter` provides "smart" color-coding: it is automatically enabled when writing to an interactive terminal (TTY) and disabled when writing to a file or pipe. You can also control it explicitly.
-
-```go
-// Force color to be enabled or disabled
-formatter := harelog.NewTextFormatter(
-    harelog.WithColor(true), // or false
-)
-logger := harelog.New(harelog.WithFormatter(formatter))
-```
-
-### Setting the Default Log Level via Environment Variable
-
-You can control the default logger's verbosity without changing code by setting the `HARELOG_LEVEL` environment variable.
+You can control the default logger's verbosity by setting the `HARELOG_LEVEL` environment variable.
 
 ```bash
 HARELOG_LEVEL=debug go run main.go
+```
+
+### Configuring for Google Cloud Trace
+
+To enable automatic trace extraction from a `context.Context`, you must provide a Project ID and the context key your application uses.
+
+```go
+const frameworkTraceKey = "x-cloud-trace-context" 
+
+logger := harelog.New(
+    harelog.WithProjectID("my-gcp-project-id"),
+    harelog.WithTraceContextKey(frameworkTraceKey),
+)
 ```
 
 ---
