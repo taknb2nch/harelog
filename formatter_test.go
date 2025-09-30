@@ -44,30 +44,76 @@ func TestJSONFormatter_Format(t *testing.T) {
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
-	testTime := time.Date(2025, 9, 27, 11, 30, 0, 0, time.UTC)
+	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
 		f := NewTextFormatter(WithColor(false)) // Explicitly disable color
 
-		entry := &logEntry{
-			Message:  "request failed",
-			Severity: string(LogLevelError),
-			Time:     jsonTime{testTime},
-			Payload: map[string]interface{}{
-				"status": 500,
-				"path":   "/api/v1/users",
+		tests := []struct {
+			name     string
+			entry    *logEntry
+			expected string
+		}{
+			{
+				name: "Simple message with no payload",
+				entry: &logEntry{
+					Message:  "server started",
+					Severity: string(LogLevelInfo),
+					Time:     jsonTime{testTime},
+				},
+				expected: `2025-09-30T14:00:00Z [INFO] server started`,
+			},
+			{
+				name: "Message with simple payload",
+				entry: &logEntry{
+					Message:  "request failed",
+					Severity: string(LogLevelError),
+					Time:     jsonTime{testTime},
+					Payload: map[string]interface{}{
+						"status": 500,
+						"path":   "/api/v1/users",
+					},
+				},
+				expected: `2025-09-30T14:00:00Z [ERROR] request failed {path="/api/v1/users", status=500}`,
+			},
+			{
+				name: "Message with all special fields",
+				entry: &logEntry{
+					Message:        "complex event",
+					Severity:       string(LogLevelWarn),
+					Time:           jsonTime{testTime},
+					Trace:          "trace-id-123",
+					SpanID:         "span-id-456",
+					CorrelationID:  "corr-id-789",
+					Labels:         map[string]string{"region": "jp-east"},
+					SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+					HTTPRequest: &HTTPRequest{
+						RequestMethod: "POST",
+						Status:        401,
+						RequestURL:    "/api/v1/login",
+					},
+					Payload: map[string]interface{}{
+						"userID": "user-abc",
+					},
+				},
+				// Note: keys are sorted alphabetically
+				expected: `2025-09-30T14:00:00Z [WARN] complex event {correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.region="jp-east", source="app/server.go:152", spanId="span-id-456", trace="trace-id-123", userID="user-abc"}`,
 			},
 		}
-		expected := `2025-09-27T11:30:00Z [ERROR] request failed {path="/api/v1/users", status=500}`
 
-		b, err := f.Format(entry)
-		if err != nil {
-			t.Fatalf("Format() returned an error: %v", err)
-		}
-		got := string(b)
-		if got != expected {
-			t.Errorf("unexpected text output:\ngot:  %s\nwant: %s", got, expected)
+		for _, tt := range tests {
+			tc := tt
+			t.Run(tc.name, func(t *testing.T) {
+				b, err := f.Format(tc.entry)
+				if err != nil {
+					t.Fatalf("Format() returned an error: %v", err)
+				}
+				got := string(b)
+				if got != tc.expected {
+					t.Errorf("unexpected text output:\ngot:  %s\nwant: %s", got, tc.expected)
+				}
+			})
 		}
 	})
 

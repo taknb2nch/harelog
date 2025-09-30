@@ -690,3 +690,71 @@ func TestFormatters(t *testing.T) {
 		}
 	})
 }
+
+// TestAutoSource_Modes verifies the behavior of the different SourceLocationMode options.
+func TestAutoSource_Modes(t *testing.T) {
+	var buf bytes.Buffer
+
+	// This helper function captures a log and returns whether the source field exists.
+	logAndCheckSourcePresence := func(logger *Logger, level logLevel) bool {
+		buf.Reset()
+		switch level {
+		case LogLevelInfo:
+			logger.Infof("test message")
+		case LogLevelError:
+			logger.Errorf("test message")
+		}
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			// Consider a failure to unmarshal as the field not being present.
+			return false
+		}
+		_, exists := entry["logging.googleapis.com/sourceLocation"]
+		return exists
+	}
+
+	t.Run("Mode Never", func(t *testing.T) {
+		logger := New(WithOutput(&buf), WithAutoSource(SourceLocationModeNever))
+		if logAndCheckSourcePresence(logger, LogLevelError) {
+			t.Error("source should NOT be present with ModeNever, even for errors")
+		}
+	})
+
+	t.Run("Mode Always", func(t *testing.T) {
+		logger := New(WithOutput(&buf), WithAutoSource(SourceLocationModeAlways))
+		if !logAndCheckSourcePresence(logger, LogLevelInfo) {
+			t.Error("source SHOULD be present with ModeAlways for info logs")
+		}
+	})
+
+	t.Run("Mode Error or Above", func(t *testing.T) {
+		logger := New(WithOutput(&buf), WithAutoSource(SourceLocationModeErrorOrAbove))
+		if logAndCheckSourcePresence(logger, LogLevelInfo) {
+			t.Error("source should NOT be present with ModeErrorOrAbove for info logs")
+		}
+		if !logAndCheckSourcePresence(logger, LogLevelError) {
+			t.Error("source SHOULD be present with ModeErrorOrAbove for error logs")
+		}
+	})
+
+	t.Run("Manual source overrides auto source", func(t *testing.T) {
+		buf.Reset()
+		logger := New(WithOutput(&buf), WithAutoSource(SourceLocationModeAlways))
+		manualLocation := &SourceLocation{File: "manual.go", Line: 101}
+		logger.Infow("testing override", "sourceLocation", manualLocation)
+
+		var entry map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		if !ok {
+			t.Fatal("manual sourceLocation field should be present")
+		}
+		if file, _ := slMap["file"].(string); file != "manual.go" {
+			t.Errorf("expected manual file to take precedence, got %q", file)
+		}
+	})
+}

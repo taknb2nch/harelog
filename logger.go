@@ -11,6 +11,8 @@ import (
 	"log"
 	"math"
 	"os"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -44,9 +46,30 @@ const (
 	logLevelValueAll logLevelValue = math.MaxInt32
 )
 
+// sourceLocationMode defines the behavior for automatic source code location capturing.
+type sourceLocationMode int
+
+const (
+	// SourceLocationModeNever disables automatic source location capturing.
+	// This provides the best performance. This is the default behavior.
+	SourceLocationModeNever sourceLocationMode = iota
+
+	// SourceLocationModeAlways enables automatic source location capturing for all log levels.
+	// This is very useful for development and debugging, but has a performance cost.
+	SourceLocationModeAlways
+
+	// SourceLocationModeErrorOrAbove enables automatic source location capturing only for
+	// logs of ERROR severity or higher. This is a balanced mode for capturing
+	// critical debug information in production with minimal performance impact.
+	SourceLocationModeErrorOrAbove
+)
+
 var (
 	std      = New()
 	stdMutex = &sync.RWMutex{}
+
+	// harelogPackage is the import path of this package, determined at runtime.
+	harelogPackage string
 
 	osExit = os.Exit
 )
@@ -62,6 +85,16 @@ var levelMap = map[logLevel]logLevelValue{
 }
 
 func init() {
+	// Determine the package path of this library at startup.
+	harelogPackage = reflect.TypeOf(Logger{}).PkgPath()
+
+	// Fail Fast: If the package path could not be determined, it's a catastrophic
+	// failure. The findCaller function would not work correctly, so we should
+	// panic immediately to alert the developer.
+	if harelogPackage == "" {
+		panic("harelog: could not determine package path for source location feature")
+	}
+
 	setupLogLevelFromEnv()
 }
 
@@ -196,15 +229,16 @@ func (e *logEntry) applyKVs(kvs ...interface{}) {
 // Logger is a structured logger that provides leveled logging.
 // Instances of Logger are safe for concurrent use.
 type Logger struct {
-	out           io.Writer
-	trace         string
-	spanId        string
-	traceSampled  *bool
-	labels        map[string]string
-	logLevel      logLevelValue
-	prefix        string
-	correlationID string
-	projectID     string
+	out                io.Writer
+	trace              string
+	spanId             string
+	traceSampled       *bool
+	labels             map[string]string
+	logLevel           logLevelValue
+	prefix             string
+	correlationID      string
+	projectID          string
+	sourceLocationMode sourceLocationMode
 
 	payload map[string]interface{}
 
@@ -217,17 +251,19 @@ type Logger struct {
 // The default log level is LevelInfo and the default output is os.Stderr.
 func New(opts ...Option) *Logger {
 	logger := &Logger{
-		out:           os.Stderr,
-		trace:         "",
-		spanId:        "",
-		traceSampled:  nil,
-		logLevel:      logLevelValueInfo,
-		prefix:        "",
-		correlationID: "",
-		projectID:     "",
-		labels:        make(map[string]string),
-		payload:       make(map[string]interface{}),
-		formatter:     NewJSONFormatter(),
+		out:                os.Stderr,
+		trace:              "",
+		spanId:             "",
+		traceSampled:       nil,
+		logLevel:           logLevelValueInfo,
+		prefix:             "",
+		correlationID:      "",
+		projectID:          "",
+		labels:             make(map[string]string),
+		payload:            make(map[string]interface{}),
+		traceContextKey:    nil,
+		sourceLocationMode: SourceLocationModeNever,
+		formatter:          NewJSONFormatter(),
 	}
 
 	for _, opt := range opts {
@@ -245,18 +281,19 @@ func Clone() *Logger {
 // Clone creates a new copy of the logger.
 func (l *Logger) Clone() *Logger {
 	newLogger := &Logger{
-		out:             l.out,
-		trace:           l.trace,
-		spanId:          l.spanId,
-		traceSampled:    l.traceSampled,
-		logLevel:        l.logLevel,
-		prefix:          l.prefix,
-		correlationID:   l.correlationID,
-		projectID:       l.projectID,
-		labels:          make(map[string]string),
-		payload:         make(map[string]interface{}),
-		traceContextKey: l.traceContextKey,
-		formatter:       l.formatter,
+		out:                l.out,
+		trace:              l.trace,
+		spanId:             l.spanId,
+		traceSampled:       l.traceSampled,
+		logLevel:           l.logLevel,
+		prefix:             l.prefix,
+		correlationID:      l.correlationID,
+		projectID:          l.projectID,
+		labels:             make(map[string]string),
+		payload:            make(map[string]interface{}),
+		traceContextKey:    l.traceContextKey,
+		sourceLocationMode: l.sourceLocationMode,
+		formatter:          l.formatter,
 	}
 
 	for k, v := range l.labels {
@@ -278,7 +315,7 @@ func (l *Logger) DebugfCtx(ctx context.Context, format string, v ...interface{})
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelDebug, fmt.Sprintf(format, v...)))
+	l.dispatch(ctx, LogLevelDebug, fmt.Sprintf(format, v...))
 }
 
 // InfofCtx logs a formatted message at the Info level.
@@ -289,7 +326,7 @@ func (l *Logger) InfofCtx(ctx context.Context, format string, v ...interface{}) 
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelInfo, fmt.Sprintf(format, v...)))
+	l.dispatch(ctx, LogLevelInfo, fmt.Sprintf(format, v...))
 }
 
 // WarnfCtx logs a formatted message at the Warn level.
@@ -300,7 +337,7 @@ func (l *Logger) WarnfCtx(ctx context.Context, format string, v ...interface{}) 
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelWarn, fmt.Sprintf(format, v...)))
+	l.dispatch(ctx, LogLevelWarn, fmt.Sprintf(format, v...))
 }
 
 // ErrorfCtx logs a formatted message at the Error level.
@@ -311,7 +348,7 @@ func (l *Logger) ErrorfCtx(ctx context.Context, format string, v ...interface{})
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelError, fmt.Sprintf(format, v...)))
+	l.dispatch(ctx, LogLevelError, fmt.Sprintf(format, v...))
 }
 
 // CriticalfCtx logs a formatted message at the Critical level.
@@ -322,7 +359,7 @@ func (l *Logger) CriticalfCtx(ctx context.Context, format string, v ...interface
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelCritical, fmt.Sprintf(format, v...)))
+	l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
 }
 
 // PrintfCtx logs a formatted message at the Info level, like log.Printf.
@@ -340,7 +377,7 @@ func (l *Logger) PrintCtx(ctx context.Context, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelInfo, sprintMessage(v...)))
+	l.dispatch(ctx, LogLevelInfo, sprintMessage(v...))
 }
 
 // PrintlnCtx logs its arguments at the Info level, like log.Println.
@@ -351,16 +388,18 @@ func (l *Logger) PrintlnCtx(ctx context.Context, v ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelInfo, sprintlnMessage(v...)))
+	l.dispatch(ctx, LogLevelInfo, sprintlnMessage(v...))
 }
 
 // FatalCtxf logs a formatted message at the Critical level and then calls os.Exit(1).
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntry(ctx, LogLevelCritical, fmt.Sprintf(format, v...)))
+	if !l.IsCriticalEnabled() {
+		return
 	}
+
+	l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
 
 	osExit(1)
 }
@@ -369,9 +408,11 @@ func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{})
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntry(ctx, LogLevelCritical, sprintMessage(v...)))
+	if !l.IsCriticalEnabled() {
+		return
 	}
+
+	l.dispatch(ctx, LogLevelCritical, sprintMessage(v...))
 
 	osExit(1)
 }
@@ -380,9 +421,11 @@ func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatallnCtx(ctx context.Context, v ...interface{}) {
-	if l.IsCriticalEnabled() {
-		l.print(l.createEntry(ctx, LogLevelCritical, sprintlnMessage(v...)))
+	if !l.IsCriticalEnabled() {
+		return
 	}
+
+	l.dispatch(ctx, LogLevelCritical, sprintlnMessage(v...))
 
 	osExit(1)
 }
@@ -395,7 +438,7 @@ func (l *Logger) DebugwCtx(ctx context.Context, msg string, kvs ...interface{}) 
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelDebug, msg, kvs...))
+	l.dispatch(ctx, LogLevelDebug, msg, kvs...)
 }
 
 // InfowCtx logs a formatted message at the Info level.
@@ -406,7 +449,7 @@ func (l *Logger) InfowCtx(ctx context.Context, msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelInfo, msg, kvs...))
+	l.dispatch(ctx, LogLevelInfo, msg, kvs...)
 }
 
 // WarnwCtx logs a formatted message at the Warn level.
@@ -417,7 +460,7 @@ func (l *Logger) WarnwCtx(ctx context.Context, msg string, kvs ...interface{}) {
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelWarn, msg, kvs...))
+	l.dispatch(ctx, LogLevelWarn, msg, kvs...)
 }
 
 // ErrorwCtx logs a formatted message at the Error level.
@@ -428,7 +471,7 @@ func (l *Logger) ErrorwCtx(ctx context.Context, msg string, kvs ...interface{}) 
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelError, msg, kvs...))
+	l.dispatch(ctx, LogLevelError, msg, kvs...)
 }
 
 // CriticalwCtx logs a formatted message at the Critical level.
@@ -439,7 +482,7 @@ func (l *Logger) CriticalwCtx(ctx context.Context, msg string, kvs ...interface{
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelCritical, msg, kvs...))
+	l.dispatch(ctx, LogLevelCritical, msg, kvs...)
 }
 
 // FatalwCtx logs a message with structured key-value pairs at the Critical level
@@ -451,7 +494,7 @@ func (l *Logger) FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) 
 		return
 	}
 
-	l.print(l.createEntry(ctx, LogLevelCritical, msg, kvs...))
+	l.dispatch(ctx, LogLevelCritical, msg, kvs...)
 
 	osExit(1)
 }
@@ -542,8 +585,18 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 	l.FatalwCtx(context.Background(), msg, kvs...)
 }
 
-// createEntry creates a logEntry with a pre-formatted message.
-// func (l *Logger) createEntry(level logLevel, msg string) *logEntry {
+// dispatch is the single, central method that handles all log entry creation and printing.
+// It is called *after* a level check has been performed by a public method.
+func (l *Logger) dispatch(ctx context.Context, level logLevel, msg string, kvs ...interface{}) {
+	e := l.createEntry(ctx, level, msg, kvs...)
+
+	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
+		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
+		e.SourceLocation = l.findCaller()
+	}
+
+	l.print(e)
+}
 
 // createEntry is the single, central helper for creating log entries.
 // It accepts a context (which can be nil) and correctly applies values with the
@@ -595,6 +648,47 @@ func (l *Logger) createEntry(ctx context.Context, level logLevel, msg string, kv
 	}
 
 	return e
+}
+
+// print writes the log entry to the logger's output.
+func (l *Logger) print(e *logEntry) {
+	out, err := l.formatter.Format(e)
+	if err != nil {
+		log.Printf("failed to format log entry: %v", err)
+
+		return
+	}
+
+	fmt.Fprintln(l.out, string(out))
+}
+
+func (l *Logger) findCaller() *SourceLocation {
+	pcs := make([]uintptr, 16)
+
+	// 0: Callers, 1: findCaller. Start search from the caller of findCaller.
+	n := runtime.Callers(2, pcs)
+
+	frames := runtime.CallersFrames(pcs[:n])
+
+	for {
+		frame, more := frames.Next()
+
+		// Skip frames that are inside the harelog package.
+		// if !strings.Contains(frame.File, "harelog") {
+		if !strings.HasPrefix(frame.Function, harelogPackage) {
+			return &SourceLocation{
+				File:     frame.File,
+				Line:     frame.Line,
+				Function: frame.Function,
+			}
+		}
+
+		if !more {
+			break
+		}
+	}
+
+	return nil
 }
 
 // IsDebugEnabled checks if the Debug level is enabled for the logger.
@@ -785,18 +879,6 @@ func SetDefaultLogLevel(level logLevel) {
 	defer stdMutex.Unlock()
 
 	std = std.WithLogLevel(level)
-}
-
-// print writes the log entry to the logger's output.
-func (l *Logger) print(e *logEntry) {
-	out, err := l.formatter.Format(e)
-	if err != nil {
-		log.Printf("failed to format log entry: %v", err)
-
-		return
-	}
-
-	fmt.Fprintln(l.out, string(out))
 }
 
 // IsDebugEnabled checks if the Debug level is enabled for the default logger.
@@ -1223,5 +1305,20 @@ func WithProjectID(id string) Option {
 func WithTraceContextKey(key interface{}) Option {
 	return func(l *Logger) {
 		l.traceContextKey = key
+	}
+}
+
+// WithAutoSource is a functional option that configures the logger's behavior for
+// automatically capturing the source code location (file, line, function name).
+// Note: Enabling this feature, especially with SourceLocationModeAlways, has a
+// non-trivial performance cost due to the use of runtime.Callers.
+func WithAutoSource(mode sourceLocationMode) Option {
+	// This is the "Fail Fast" check.
+	if mode < SourceLocationModeNever || mode > SourceLocationModeErrorOrAbove {
+		panic(fmt.Sprintf("harelog: invalid SourceLocationMode provided: %d", mode))
+	}
+
+	return func(l *Logger) {
+		l.sourceLocationMode = mode
 	}
 }
