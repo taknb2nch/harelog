@@ -34,28 +34,30 @@ harelog.Infow("User logged in",
 )
 ```
 
-**Example Output (JSON):**
-
-```json
-{"message":"Server is starting...\n","severity":"INFO","timestamp":"..."}
-{"message":"Server started on port 8080","severity":"INFO","timestamp":"..."}
-{"message":"User logged in","severity":"INFO","userID":"user-123","ipAddress":"127.0.0.1","timestamp":"..."}
-```
-
 ### Adding Context with the `With` Method (Child Loggers)
 
-You can create a contextual logger (or "child logger") that carries a predefined set of key-value pairs. This is extremely useful for request-scoped logging.
+You can create a contextual logger (or "child logger") that carries a predefined set of key-value pairs. This is extremely useful for request-scoped logging, as you don't need to repeat fields like a `requestID` in every log call.
 
 ```go
 var logger = harelog.New() // Your base logger
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
     // Create a new child logger with context for this specific request.
+    // The base logger is not modified.
     reqLogger := logger.With("requestID", "abc-123", "remoteAddr", r.RemoteAddr)
 
     reqLogger.Infof("request received")
     reqLogger.Infow("user authenticated", "userID", "user-456")
 }
+```
+
+**Example Output from `reqLogger`:**
+
+The `requestID` and `remoteAddr` fields are automatically added to all logs.
+
+```json
+{"message":"request received","severity":"INFO","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
+{"message":"user authenticated","severity":"INFO","userID":"user-456","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
 ```
 
 ### Logging with `context.Context` (`...Ctx` methods)
@@ -71,18 +73,22 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## Configuration & Features
+## Configuration
 
-`harelog` can be configured using functional options at initialization.
+`harelog` provides a consistent and flexible API for configuration through three main patterns: Functional Options for `New()`, `With...` methods for deriving loggers, and `SetDefault...` functions for the global logger.
 
-### Setting the Log Level
-
-You can set the initial log level when creating a new logger.
+The most common way to configure a logger is at initialization using functional options.
 
 ```go
-// Create a logger that only outputs DEBUG level logs or higher.
+// Example of a fully configured logger
 logger := harelog.New(
+    harelog.WithOutput(os.Stdout),
     harelog.WithLogLevel(harelog.LogLevelDebug),
+    harelog.WithFormatter(harelog.NewTextFormatter()),
+    harelog.WithAutoSource(harelog.SourceLocationModeAlways),
+    harelog.WithPrefix("[app] "),
+    harelog.WithLabels(map[string]string{"service": "api"}),
+    harelog.WithFields("version", "v1.5.0"),
 )
 ```
 
@@ -92,43 +98,27 @@ For easier debugging, `harelog` can automatically log the file and line number o
 
 ```go
 // In production, you might only want source location for errors.
-logger := harelog.New(
+prodLogger := harelog.New(
     harelog.WithAutoSource(harelog.SourceLocationModeErrorOrAbove),
 )
 
-logger.Infof("This will NOT have source info.")
-logger.Errorf("This WILL have source info.")
+prodLogger.Infof("This will NOT have source info.")
+prodLogger.Errorf("This WILL have source info.")
 ```
 
-**Example Verification:**
+### Output Format (Formatter) & Color
 
-The accuracy of this feature is best verified by running a sample application. For a complete, runnable example, please see the `examples/main.go` file in this repository.
-
-*Expected Output from the example:*
-The `sourceLocation` will correctly point to the file and line number of the call site.
-
-```json
-{"message":"...","severity":"ERROR","logging.googleapis.com/sourceLocation":{"file":"/path/to/your/project/examples/main.go","line":42,...}}
-```
-
-### Output Format (Formatter)
-
-By default, logs are in JSON format. For local development, you can switch to a human-readable text format with "smart" color-coding.
+By default, logs are in JSON format. For local development, you can switch to a human-readable text format with "smart" color-coding (enabled by default for terminals).
 
 ```go
 // Use the WithFormatter option to switch to the text logger
 logger := harelog.New(
     harelog.WithFormatter(harelog.NewTextFormatter()),
 )
-logger.Infow("server started", "port", 8080)
-```
 
-**Example Text Output (in a terminal):**
-
+// You can also explicitly control color
+colorFormatter := harelog.NewTextFormatter(harelog.WithColor(true))
 ```
-2025-09-30T22:00:00Z [INFO] server started {port=8080}
-```
-(Note: The `[INFO]` part will be colorized in a supported terminal.)
 
 ### Default Log Level via Environment Variable
 

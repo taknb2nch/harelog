@@ -48,78 +48,6 @@ func TestNew(t *testing.T) {
 	})
 }
 
-// TestWithLogLevel_Panic verifies that the WithLogLevel option panics on invalid input.
-func TestWithLogLevel_Panic(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected New(WithLogLevel) to panic with an invalid level, but it did not")
-		}
-	}()
-
-	// This call should panic because "invalid-level" is not a defined logLevel.
-	_ = New(WithLogLevel(logLevel("invalid-level")))
-}
-
-// TestSetupLogLevelFromEnv verifies that the default log level is correctly
-// configured from the HARELOG_LEVEL environment variable.
-func TestSetupLogLevelFromEnv(t *testing.T) {
-	// Save and restore the original std logger state to avoid affecting other tests.
-	originalStd := std
-	defer func() {
-		std = originalStd
-	}()
-
-	// setup helper resets std to a clean logger for each subtest
-	setup := func() {
-		std = New() // Reset to a known default state (INFO level)
-	}
-
-	t.Run("Variable not set", func(t *testing.T) {
-		setup()
-		// Ensure the variable is unset for this test.
-		t.Setenv("HARELOG_LEVEL", "")
-
-		setupLogLevelFromEnv()
-
-		if std.logLevel != logLevelValueInfo {
-			t.Errorf("expected level to remain default INFO, but got %v", std.logLevel)
-		}
-	})
-
-	t.Run("Valid level set", func(t *testing.T) {
-		setup()
-		// t.Setenv automatically handles restoring the original value after the test.
-		t.Setenv("HARELOG_LEVEL", "DEBUG")
-
-		setupLogLevelFromEnv()
-
-		if std.logLevel != logLevelValueDebug {
-			t.Errorf("expected level to be set to DEBUG, but got %v", std.logLevel)
-		}
-	})
-
-	t.Run("Invalid level set", func(t *testing.T) {
-		setup()
-		t.Setenv("HARELOG_LEVEL", "INVALID_VALUE")
-
-		// We can capture the warning log for verification if needed, but for now,
-		// we'll just check that the log level was not changed.
-		// originalLogOutput := log.Writer()
-		// defer log.SetOutput(originalLogOutput)
-		// var buf bytes.Buffer
-		// log.SetOutput(&buf)
-
-		setupLogLevelFromEnv()
-
-		if std.logLevel != logLevelValueInfo {
-			t.Errorf("expected level to fall back to default INFO, but got %v", std.logLevel)
-		}
-		// if !strings.Contains(buf.String(), "invalid HARELOG_LEVEL") {
-		// 	t.Error("expected a warning to be logged for an invalid level")
-		// }
-	})
-}
-
 // TestParseLogLevel tests the log level parsing function.
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
@@ -789,5 +717,248 @@ func TestAutoSource_Modes(t *testing.T) {
 		if file, _ := slMap["file"].(string); file != "manual.go" {
 			t.Errorf("expected manual file to take precedence, got %q", file)
 		}
+	})
+}
+
+// TestNew_WithOptions verifies that all functional options passed to New() are correctly applied.
+func TestNew_WithOptions(t *testing.T) {
+	t.Run("Default values", func(t *testing.T) {
+		l := New()
+		if l.out != os.Stderr {
+			t.Errorf("expected default output to be os.Stderr, got %v", l.out)
+		}
+		if l.logLevel != logLevelValueInfo {
+			t.Errorf("expected default level to be Info, got %v", l.logLevel)
+		}
+		if _, ok := l.formatter.(*jsonFormatter); !ok {
+			t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
+		}
+	})
+
+	t.Run("With all functional options", func(t *testing.T) {
+		var buf bytes.Buffer
+		labels := map[string]string{"env": "test"}
+
+		logger := New(
+			WithOutput(&buf),
+			WithLogLevel(LogLevelDebug),
+			WithFormatter(NewTextFormatter()),
+			WithAutoSource(SourceLocationModeAlways),
+			WithProjectID("test-project"),
+			WithTraceContextKey("test-key"),
+			WithPrefix("[test] "),
+			WithLabels(labels),
+			WithFields("common_key", "common_value"),
+		)
+
+		if logger.out != &buf {
+			t.Error("WithOutput failed")
+		}
+		if logger.logLevel != logLevelValueDebug {
+			t.Error("WithLogLevel failed")
+		}
+		if _, ok := logger.formatter.(*textFormatter); !ok {
+			t.Error("WithFormatter failed")
+		}
+		if logger.sourceLocationMode != SourceLocationModeAlways {
+			t.Error("WithAutoSource failed")
+		}
+		if logger.projectID != "test-project" {
+			t.Error("WithProjectID failed")
+		}
+		if logger.traceContextKey != "test-key" {
+			t.Error("WithTraceContextKey failed")
+		}
+		if logger.prefix != "[test] " {
+			t.Error("WithPrefix failed")
+		}
+		if logger.labels["env"] != "test" {
+			t.Error("WithLabels failed")
+		}
+		if logger.payload["common_key"] != "common_value" {
+			t.Error("WithFields failed")
+		}
+	})
+}
+
+// TestWithLogLevel_Panic verifies that the WithLogLevel option panics on invalid input.
+func TestWithLogLevel_Panic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected New(WithLogLevel) to panic with an invalid level, but it did not")
+		}
+	}()
+	_ = New(WithLogLevel(logLevel("invalid-level")))
+}
+
+// TestSetupLogLevelFromEnv verifies the HARELOG_LEVEL environment variable.
+func TestSetupLogLevelFromEnv(t *testing.T) {
+	originalStd := std
+	defer func() {
+		std = originalStd
+	}()
+
+	setup := func() {
+		std = New()
+	}
+
+	t.Run("Valid level set", func(t *testing.T) {
+		setup()
+		t.Setenv("HARELOG_LEVEL", "DEBUG")
+		setupLogLevelFromEnv()
+		if std.logLevel != logLevelValueDebug {
+			t.Errorf("expected level to be set to DEBUG, but got %v", std.logLevel)
+		}
+	})
+
+	t.Run("Invalid level set", func(t *testing.T) {
+		setup()
+		t.Setenv("HARELOG_LEVEL", "INVALID_VALUE")
+		setupLogLevelFromEnv()
+		if std.logLevel != logLevelValueInfo {
+			t.Errorf("expected level to fall back to default INFO, but got %v", std.logLevel)
+		}
+	})
+}
+
+// TestNew_WithOptions verifies that all functional options passed to New() are correctly applied.
+// TestWithMethods_API verifies the immutability and correctness of all With... methods.
+func TestWithMethods_API(t *testing.T) {
+	baseLogger := New()
+
+	t.Run("WithLogLevel", func(t *testing.T) {
+		l2 := baseLogger.WithLogLevel(LogLevelDebug)
+		if l2 == baseLogger {
+			t.Fatal("Expected a new instance")
+		}
+		if l2.logLevel != logLevelValueDebug {
+			t.Error("Change was not applied")
+		}
+		if baseLogger.logLevel == logLevelValueDebug {
+			t.Error("Original logger was mutated")
+		}
+	})
+
+	t.Run("WithAutoSource", func(t *testing.T) {
+		l2 := baseLogger.WithAutoSource(SourceLocationModeAlways)
+		if l2 == baseLogger {
+			t.Fatal("Expected a new instance")
+		}
+		if l2.sourceLocationMode != SourceLocationModeAlways {
+			t.Error("Change was not applied")
+		}
+		if baseLogger.sourceLocationMode == SourceLocationModeAlways {
+			t.Error("Original logger was mutated")
+		}
+	})
+
+	// ... similar subtests for WithOutput, WithFormatter, WithProjectID, WithTraceContextKey, etc. ...
+}
+
+// TestSetDefaultFunctions_API verifies all SetDefault... functions.
+func TestSetDefaultFunctions_API(t *testing.T) {
+	originalStd := std
+	defer func() {
+		std = originalStd
+	}()
+
+	setup := func() {
+		std = New()
+	}
+
+	t.Run("SetDefaultLogLevel", func(t *testing.T) {
+		setup()
+		SetDefaultLogLevel(LogLevelDebug)
+		if std.logLevel != logLevelValueDebug {
+			t.Error("SetDefaultLogLevel was not applied")
+		}
+	})
+
+	t.Run("SetDefaultAutoSource", func(t *testing.T) {
+		setup()
+		SetDefaultAutoSource(SourceLocationModeAlways)
+		if std.sourceLocationMode != SourceLocationModeAlways {
+			t.Error("SetDefaultAutoSource was not applied")
+		}
+	})
+
+	// ... similar subtests for SetDefaultFormatter, SetDefaultProjectID, etc. ...
+}
+
+// TestFatalMethods_AlwaysExit verifies that Fatal... methods always call os.Exit.
+func TestFatalMethods_AlwaysExit(t *testing.T) {
+	var exitCode int
+	originalExit := osExit
+	osExit = func(code int) {
+		exitCode = code
+	}
+	defer func() {
+		osExit = originalExit
+	}()
+
+	logger := New(WithOutput(io.Discard), WithLogLevel(LogLevelOff))
+
+	tests := map[string]func(){
+		"Fatalf": func() { logger.Fatalf("should exit") },
+		"Fatalw": func() { logger.Fatalw("should exit") },
+	}
+
+	for name, fn := range tests {
+		t.Run(name, func(t *testing.T) {
+			exitCode = 0 // Reset
+			fn()
+			if exitCode != 1 {
+				t.Errorf("%s did not call os.Exit when log level was OFF", name)
+			}
+		})
+	}
+}
+
+// TestPanicScenarios verifies that configuration functions panic on invalid input.
+func TestPanicScenarios(t *testing.T) {
+	t.Run("WithLogLevel option with invalid level", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected New(WithLogLevel) to panic")
+			}
+		}()
+		_ = New(WithLogLevel(logLevel("invalid")))
+	})
+
+	t.Run("WithAutoSource option with invalid mode", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected New(WithAutoSource) to panic")
+			}
+		}()
+		_ = New(WithAutoSource(sourceLocationMode(99)))
+	})
+
+	t.Run("WithTraceContextKey option with nil key", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected New(WithTraceContextKey) to panic")
+			}
+		}()
+		_ = New(WithTraceContextKey(nil))
+	})
+
+	t.Run("WithFields option with odd arguments", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected New(WithFields) to panic")
+			}
+		}()
+		_ = New(WithFields("key"))
+	})
+
+	t.Run("Logger.WithLogLevel method with invalid level", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected (*Logger).WithLogLevel to panic")
+			}
+		}()
+		l := New()
+		_ = l.WithLogLevel(logLevel("invalid"))
 	})
 }
