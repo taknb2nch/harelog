@@ -893,8 +893,8 @@ func SetDefaultFormatter(f Formatter) {
 	std = std.WithFormatter(f)
 }
 
-// WithAutoSource sets the automatic source location capturing mode.
-func SetAutoSource(mode sourceLocationMode) {
+// SetDefaultAutoSource sets the automatic source location capturing mode.
+func SetDefaultAutoSource(mode sourceLocationMode) {
 	stdMutex.Lock()
 	defer stdMutex.Unlock()
 
