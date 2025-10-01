@@ -395,12 +395,11 @@ func (l *Logger) PrintlnCtx(ctx context.Context, v ...interface{}) {
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
-
+	// FatalfCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -408,12 +407,11 @@ func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{})
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, sprintMessage(v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, sprintMessage(v...))
-
+	// FatalCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -421,12 +419,11 @@ func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatallnCtx(ctx context.Context, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, sprintlnMessage(v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, sprintlnMessage(v...))
-
+	// FatallnCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -490,12 +487,11 @@ func (l *Logger) CriticalwCtx(ctx context.Context, msg string, kvs ...interface{
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, msg, kvs...)
 	}
 
-	l.dispatch(ctx, LogLevelCritical, msg, kvs...)
-
+	// FatalwCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -716,36 +712,6 @@ func (l *Logger) IsCriticalEnabled() bool {
 	return isCriticalEnabled(l.logLevel)
 }
 
-// WithLabels returns a new logger instance with the provided labels added.
-func (l *Logger) WithLabels(labels map[string]string) *Logger {
-	newLogger := l.Clone()
-
-	for k, v := range labels {
-		newLogger.labels[k] = v
-	}
-
-	return newLogger
-}
-
-// WithoutLabels returns a new logger instance with the provided labels removed.
-func (l *Logger) WithoutLabels(keys ...string) *Logger {
-	newLogger := l.Clone()
-
-	for _, key := range keys {
-		delete(newLogger.labels, key)
-	}
-
-	return newLogger
-}
-
-// WithPrefix returns a new logger instance with the specified message prefix.
-func (l *Logger) WithPrefix(prefix string) *Logger {
-	newLogger := l.Clone()
-	newLogger.prefix = prefix
-
-	return newLogger
-}
-
 // WithLogLevel returns a new logger instance with the specified log level.
 func (l *Logger) WithLogLevel(level logLevel) *Logger {
 	if _, ok := levelMap[level]; !ok {
@@ -775,6 +741,92 @@ func (l *Logger) WithFormatter(f Formatter) *Logger {
 
 	if f != nil {
 		newLogger.formatter = f
+	}
+
+	return newLogger
+}
+
+// WithAutoSource returns a new logger with a different source location mode.
+func (l *Logger) WithAutoSource(mode sourceLocationMode) *Logger {
+	if mode < SourceLocationModeNever || mode > SourceLocationModeErrorOrAbove {
+		panic(fmt.Sprintf("harelog: invalid SourceLocationMode provided: %d", mode))
+	}
+
+	newLogger := l.Clone()
+
+	newLogger.sourceLocationMode = mode
+
+	return newLogger
+}
+
+// WithProjectID returns a new logger with a different Project ID.
+func (l *Logger) WithProjectID(projectID string) *Logger {
+	newLogger := l.Clone()
+	newLogger.projectID = projectID
+
+	return newLogger
+}
+
+// WithTraceContextKey returns a new logger with a different trace context key.
+func (l *Logger) WithTraceContextKey(key interface{}) *Logger {
+	if key == nil {
+		panic("harelog: nil key provided to WithTraceContextKey; context keys must be non-nil")
+	}
+
+	newLogger := l.Clone()
+	newLogger.traceContextKey = key
+
+	return newLogger
+}
+
+// WithPrefix returns a new logger instance with the specified message prefix.
+func (l *Logger) WithPrefix(prefix string) *Logger {
+	newLogger := l.Clone()
+	newLogger.prefix = prefix
+
+	return newLogger
+}
+
+// WithLabels returns a new logger instance with the provided labels added.
+func (l *Logger) WithLabels(labels map[string]string) *Logger {
+	newLogger := l.Clone()
+
+	for k, v := range labels {
+		newLogger.labels[k] = v
+	}
+
+	return newLogger
+}
+
+// WithoutLabels returns a new logger instance with the provided labels removed.
+func (l *Logger) WithoutLabels(keys ...string) *Logger {
+	newLogger := l.Clone()
+
+	for _, key := range keys {
+		delete(newLogger.labels, key)
+	}
+
+	return newLogger
+}
+
+// With returns a new logger instance with the provided key-value pairs added to its context.
+// It panics if the number of arguments is odd or if a key is not a string.
+func (l *Logger) With(kvs ...interface{}) *Logger {
+	n := len(kvs)
+
+	if n%2 != 0 {
+		panic("log.With: odd number of arguments received")
+	}
+
+	newLogger := l.Clone()
+
+	for i := 0; i < n; i += 2 {
+		key, ok := kvs[i].(string)
+		if !ok {
+			panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+		}
+
+		newLogger.payload[key] = kvs[i+1]
 	}
 
 	return newLogger
@@ -812,52 +864,13 @@ func (l *Logger) WithCorrelationID(correlationID string) *Logger {
 	return newLogger
 }
 
-// With returns a new logger instance with the provided key-value pairs added to its context.
-// It panics if the number of arguments is odd or if a key is not a string.
-func (l *Logger) With(kvs ...interface{}) *Logger {
-	n := len(kvs)
-
-	if n%2 != 0 {
-		panic("log.With: odd number of arguments received")
-	}
-
-	newLogger := l.Clone()
-
-	for i := 0; i < n; i += 2 {
-		key, ok := kvs[i].(string)
-		if !ok {
-			panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
-		}
-
-		newLogger.payload[key] = kvs[i+1]
-	}
-
-	return newLogger
-}
-
-// SetDefaultLabels sets labels for the default logger.
-// These labels will be included in all logs from the default logger.
-func SetDefaultLabels(labels map[string]string) {
+// SetDefaultLogLevel sets the log level for the default logger.
+// The provided level should be validated with ParseLogLevel first.
+func SetDefaultLogLevel(level logLevel) {
 	stdMutex.Lock()
 	defer stdMutex.Unlock()
 
-	std = std.WithLabels(labels)
-}
-
-// RemoveDefaultLabels removes labels from the default logger.
-func RemoveDefaultLabels(keys ...string) {
-	stdMutex.Lock()
-	defer stdMutex.Unlock()
-
-	std = std.WithoutLabels(keys...)
-}
-
-// SetDefaultPrefix sets the message prefix for the default logger.
-func SetDefaultPrefix(prefix string) {
-	stdMutex.Lock()
-	defer stdMutex.Unlock()
-
-	std = std.WithPrefix(prefix)
+	std = std.WithLogLevel(level)
 }
 
 // SetDefaultOutput sets the output destination for the default logger.
@@ -876,13 +889,53 @@ func SetDefaultFormatter(f Formatter) {
 	std = std.WithFormatter(f)
 }
 
-// SetDefaultLogLevel sets the log level for the default logger.
-// The provided level should be validated with ParseLogLevel first.
-func SetDefaultLogLevel(level logLevel) {
+// SetDefaultAutoSource sets the automatic source location capturing mode.
+func SetDefaultAutoSource(mode sourceLocationMode) {
 	stdMutex.Lock()
 	defer stdMutex.Unlock()
 
-	std = std.WithLogLevel(level)
+	std = std.WithAutoSource(mode)
+}
+
+// WithProjectID sets the initial Google Cloud Project ID.
+func SetDefaultProjectID(projectID string) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithProjectID(projectID)
+}
+
+// WithTraceContextKey sets the initial context key for tracing.
+func SetDefaultTraceContextKey(key interface{}) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithTraceContextKey(key)
+}
+
+// SetDefaultPrefix sets the message prefix for the default logger.
+func SetDefaultPrefix(prefix string) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithPrefix(prefix)
+}
+
+// SetDefaultLabels sets labels for the default logger.
+// These labels will be included in all logs from the default logger.
+func SetDefaultLabels(labels map[string]string) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithLabels(labels)
+}
+
+// RemoveDefaultLabels removes labels from the default logger.
+func RemoveDefaultLabels(keys ...string) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = std.WithoutLabels(keys...)
 }
 
 // IsDebugEnabled checks if the Debug level is enabled for the default logger.
@@ -1280,12 +1333,15 @@ func sprintlnMessage(v ...interface{}) string {
 // Option configures a Logger.
 type Option func(*Logger)
 
-// WithFormatter sets the formatter for the logger.
-func WithFormatter(f Formatter) Option {
+// WithLogLevel is a functional option that sets the initial log level for the logger.
+func WithLogLevel(level logLevel) Option {
 	return func(l *Logger) {
-		if f != nil {
-			l.formatter = f
+		lv, ok := levelMap[level]
+		if !ok {
+			panic(fmt.Sprintf("harelog: invalid log level provided to WithLogLevel: %q", level))
 		}
+
+		l.logLevel = lv
 	}
 }
 
@@ -1295,6 +1351,30 @@ func WithOutput(w io.Writer) Option {
 		if w != nil {
 			l.out = w
 		}
+	}
+}
+
+// WithFormatter sets the formatter for the logger.
+func WithFormatter(f Formatter) Option {
+	return func(l *Logger) {
+		if f != nil {
+			l.formatter = f
+		}
+	}
+}
+
+// WithAutoSource is a functional option that configures the logger's behavior for
+// automatically capturing the source code location (file, line, function name).
+// Note: Enabling this feature, especially with SourceLocationModeAlways, has a
+// non-trivial performance cost due to the use of runtime.Callers.
+func WithAutoSource(mode sourceLocationMode) Option {
+	// This is the "Fail Fast" check.
+	if mode < SourceLocationModeNever || mode > SourceLocationModeErrorOrAbove {
+		panic(fmt.Sprintf("harelog: invalid SourceLocationMode provided: %d", mode))
+	}
+
+	return func(l *Logger) {
+		l.sourceLocationMode = mode
 	}
 }
 
@@ -1316,29 +1396,39 @@ func WithTraceContextKey(key interface{}) Option {
 	}
 }
 
-// WithAutoSource is a functional option that configures the logger's behavior for
-// automatically capturing the source code location (file, line, function name).
-// Note: Enabling this feature, especially with SourceLocationModeAlways, has a
-// non-trivial performance cost due to the use of runtime.Callers.
-func WithAutoSource(mode sourceLocationMode) Option {
-	// This is the "Fail Fast" check.
-	if mode < SourceLocationModeNever || mode > SourceLocationModeErrorOrAbove {
-		panic(fmt.Sprintf("harelog: invalid SourceLocationMode provided: %d", mode))
-	}
-
+// WithPrefix sets the initial message prefix.
+func WithPrefix(prefix string) Option {
 	return func(l *Logger) {
-		l.sourceLocationMode = mode
+		l.prefix = prefix
 	}
 }
 
-// WithLogLevel is a functional option that sets the initial log level for the logger.
-func WithLogLevel(level logLevel) Option {
+// WithLabels sets the initial set of labels.
+func WithLabels(labels map[string]string) Option {
 	return func(l *Logger) {
-		lv, ok := levelMap[level]
-		if !ok {
-			panic(fmt.Sprintf("harelog: invalid log level provided to WithLogLevel: %q", level))
+		for k, v := range labels {
+			l.labels[k] = v
+		}
+	}
+}
+
+// WithFields sets the initial set of contextual key-value fields (payload).
+func WithFields(kvs ...interface{}) Option {
+	n := len(kvs)
+
+	if n%2 != 0 {
+		panic("log.With: odd number of arguments received")
+	}
+
+	return func(l *Logger) {
+		for i := 0; i < n; i += 2 {
+			key, ok := kvs[i].(string)
+			if !ok {
+				panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+			}
+
+			l.payload[key] = kvs[i+1]
 		}
 
-		l.logLevel = lv
 	}
 }
