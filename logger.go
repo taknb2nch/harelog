@@ -395,12 +395,11 @@ func (l *Logger) PrintlnCtx(ctx context.Context, v ...interface{}) {
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, fmt.Sprintf(format, v...))
-
+	// FatalfCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -408,12 +407,11 @@ func (l *Logger) FatalfCtx(ctx context.Context, format string, v ...interface{})
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, sprintMessage(v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, sprintMessage(v...))
-
+	// FatalCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -421,12 +419,11 @@ func (l *Logger) FatalCtx(ctx context.Context, v ...interface{}) {
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatallnCtx(ctx context.Context, v ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, sprintlnMessage(v...))
 	}
 
-	l.dispatch(ctx, LogLevelCritical, sprintlnMessage(v...))
-
+	// FatallnCtx functions always call os.Exit.
 	osExit(1)
 }
 
@@ -490,12 +487,11 @@ func (l *Logger) CriticalwCtx(ctx context.Context, msg string, kvs ...interface{
 // It extracts values from the provided context, such as Google Cloud Trace identifiers,
 // and includes them in the log entry.
 func (l *Logger) FatalwCtx(ctx context.Context, msg string, kvs ...interface{}) {
-	if !l.IsCriticalEnabled() {
-		return
+	if l.IsCriticalEnabled() {
+		l.dispatch(ctx, LogLevelCritical, msg, kvs...)
 	}
 
-	l.dispatch(ctx, LogLevelCritical, msg, kvs...)
-
+	// FatalwCtx functions always call os.Exit.
 	osExit(1)
 }
 
