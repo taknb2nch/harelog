@@ -748,6 +748,10 @@ func (l *Logger) WithPrefix(prefix string) *Logger {
 
 // WithLogLevel returns a new logger instance with the specified log level.
 func (l *Logger) WithLogLevel(level logLevel) *Logger {
+	if _, ok := levelMap[level]; !ok {
+		panic(fmt.Sprintf("harelog: invalid log level provided to (*Logger).WithLogLevel: %q", level))
+	}
+
 	newLogger := l.Clone()
 	newLogger.logLevel = levelMap[level]
 
@@ -1303,6 +1307,10 @@ func WithProjectID(id string) Option {
 
 // WithTraceContextKey sets the key used to extract Google Cloud Trace data from a context.Context.
 func WithTraceContextKey(key interface{}) Option {
+	if key == nil {
+		panic("harelog: nil key provided to WithTraceContextKey; context keys must be non-nil")
+	}
+
 	return func(l *Logger) {
 		l.traceContextKey = key
 	}
