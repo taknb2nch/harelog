@@ -75,6 +75,17 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 `harelog` can be configured using functional options at initialization.
 
+### Setting the Log Level
+
+You can set the initial log level when creating a new logger.
+
+```go
+// Create a logger that only outputs DEBUG level logs or higher.
+logger := harelog.New(
+    harelog.WithLogLevel(harelog.LogLevelDebug),
+)
+```
+
 ### Automatic Source Code Location
 
 For easier debugging, `harelog` can automatically log the file and line number of the log call site. This feature has a performance cost and is configurable via different modes.
