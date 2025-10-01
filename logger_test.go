@@ -15,16 +15,49 @@ import (
 
 // TestNew verifies that New() creates a logger with correct default values.
 func TestNew(t *testing.T) {
-	l := New()
-	if l.out != os.Stderr {
-		t.Errorf("expected default output to be os.Stderr, got %v", l.out)
-	}
-	if l.logLevel != logLevelValueInfo {
-		t.Errorf("expected default level to be Info, got %v", l.logLevel)
-	}
-	if _, ok := l.formatter.(*jsonFormatter); !ok {
-		t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
-	}
+	t.Run("Default values", func(t *testing.T) {
+		l := New()
+		if l.out != os.Stderr {
+			t.Errorf("expected default output to be os.Stderr, got %v", l.out)
+		}
+		if l.logLevel != logLevelValueInfo {
+			t.Errorf("expected default level to be Info, got %v", l.logLevel)
+		}
+		if _, ok := l.formatter.(*jsonFormatter); !ok {
+			t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
+		}
+	})
+
+	t.Run("WithLogLevel option", func(t *testing.T) {
+		var buf bytes.Buffer
+		// Create a logger with a non-default log level.
+		logger := New(
+			WithOutput(&buf),
+			WithLogLevel(LogLevelDebug),
+		)
+
+		if logger.logLevel != logLevelValueDebug {
+			t.Errorf("expected log level to be DEBUG, but got %v", logger.logLevel)
+		}
+
+		// Verify that the level is applied correctly.
+		logger.Infof("this is an info message") // Should be logged
+		if buf.Len() == 0 {
+			t.Error("expected info message to be logged when level is DEBUG, but it was not")
+		}
+	})
+}
+
+// TestWithLogLevel_Panic verifies that the WithLogLevel option panics on invalid input.
+func TestWithLogLevel_Panic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected New(WithLogLevel) to panic with an invalid level, but it did not")
+		}
+	}()
+
+	// This call should panic because "invalid-level" is not a defined logLevel.
+	_ = New(WithLogLevel(logLevel("invalid-level")))
 }
 
 // TestSetupLogLevelFromEnv verifies that the default log level is correctly
