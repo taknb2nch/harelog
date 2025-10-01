@@ -1322,3 +1322,15 @@ func WithAutoSource(mode sourceLocationMode) Option {
 		l.sourceLocationMode = mode
 	}
 }
+
+// WithLogLevel is a functional option that sets the initial log level for the logger.
+func WithLogLevel(level logLevel) Option {
+	return func(l *Logger) {
+		lv, ok := levelMap[level]
+		if !ok {
+			panic(fmt.Sprintf("harelog: invalid log level provided to WithLogLevel: %q", level))
+		}
+
+		l.logLevel = lv
+	}
+}
