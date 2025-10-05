@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestNew verifies that New() creates a logger with correct default values.
@@ -53,7 +54,7 @@ func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
-		want      logLevel
+		want      LogLevel
 		expectErr bool
 	}{
 		{"Valid uppercase", "INFO", LogLevelInfo, false},
@@ -657,7 +658,7 @@ func TestAutoSource_Modes(t *testing.T) {
 	var buf bytes.Buffer
 
 	// This helper function captures a log and returns whether the source field exists.
-	logAndCheckSourcePresence := func(logger *Logger, level logLevel) bool {
+	logAndCheckSourcePresence := func(logger *Logger, level LogLevel) bool {
 		buf.Reset()
 		switch level {
 		case LogLevelInfo:
@@ -788,7 +789,7 @@ func TestWithLogLevel_Panic(t *testing.T) {
 			t.Error("expected New(WithLogLevel) to panic with an invalid level, but it did not")
 		}
 	}()
-	_ = New(WithLogLevel(logLevel("invalid-level")))
+	_ = New(WithLogLevel(LogLevel("invalid-level")))
 }
 
 // TestSetupLogLevelFromEnv verifies the HARELOG_LEVEL environment variable.
@@ -922,7 +923,7 @@ func TestPanicScenarios(t *testing.T) {
 				t.Error("expected New(WithLogLevel) to panic")
 			}
 		}()
-		_ = New(WithLogLevel(logLevel("invalid")))
+		_ = New(WithLogLevel(LogLevel("invalid")))
 	})
 
 	t.Run("WithAutoSource option with invalid mode", func(t *testing.T) {
@@ -959,6 +960,246 @@ func TestPanicScenarios(t *testing.T) {
 			}
 		}()
 		l := New()
-		_ = l.WithLogLevel(logLevel("invalid"))
+		_ = l.WithLogLevel(LogLevel("invalid"))
 	})
+}
+
+// mockHook is a simple hook for testing purposes.
+// It stores fired entries and allows for synchronization.
+type mockHook struct {
+	mu      sync.Mutex
+	entries []*LogEntry
+	levels  []LogLevel
+	wg      *sync.WaitGroup
+	delay   time.Duration // Optional delay to simulate work
+}
+
+// newMockHook creates a new mockHook.
+func newMockHook(levels ...LogLevel) *mockHook {
+	return &mockHook{
+		levels: levels,
+		wg:     &sync.WaitGroup{},
+	}
+}
+
+// Levels returns the log levels this hook is interested in.
+func (h *mockHook) Levels() []LogLevel {
+	return h.levels
+}
+
+// Fire is called when a log entry matches the hook's levels.
+func (h *mockHook) Fire(entry *LogEntry) error {
+	if h.delay > 0 {
+		time.Sleep(h.delay)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.entries = append(h.entries, entry)
+	if h.wg != nil {
+		h.wg.Done()
+	}
+	return nil
+}
+
+// FiredEntries returns a copy of the entries this hook has received.
+func (h *mockHook) FiredEntries() []*LogEntry {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Return a copy to avoid race conditions
+	entriesCopy := make([]*LogEntry, len(h.entries))
+	copy(entriesCopy, h.entries)
+	return entriesCopy
+}
+
+// Reset clears the stored entries.
+func (h *mockHook) Reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.entries = nil
+}
+
+// panicHook is a hook that always panics.
+type panicHook struct{}
+
+func (h *panicHook) Levels() []LogLevel {
+	return []LogLevel{LogLevelError}
+}
+
+func (h *panicHook) Fire(entry *LogEntry) error {
+	panic("test panic in hook")
+}
+
+// --- Hook Tests ---
+
+func TestLogger_Hooks_BasicFiring(t *testing.T) {
+	hook := newMockHook(LogLevelError, LogLevelCritical)
+	var buf bytes.Buffer
+	logger := New(WithOutput(&buf), WithHooks(hook))
+	defer logger.Close()
+
+	logger.Infof("This should not be hooked.")
+	logger.Warnf("This should not be hooked either.")
+	logger.Errorf("This is an error.")
+	logger.Criticalf("This is critical.")
+
+	// Wait for hooks to be processed
+	time.Sleep(50 * time.Millisecond)
+
+	fired := hook.FiredEntries()
+	if len(fired) != 2 {
+		t.Fatalf("expected 2 fired entries, got %d", len(fired))
+	}
+
+	if fired[0].Severity != LogLevelError || fired[0].Message != "This is an error." {
+		t.Errorf("unexpected entry for error log: got %+v", fired[0])
+	}
+	if fired[1].Severity != LogLevelCritical || fired[1].Message != "This is critical." {
+		t.Errorf("unexpected entry for critical log: got %+v", fired[1])
+	}
+}
+
+func TestLogger_Hooks_PanicRecovery(t *testing.T) {
+	hook := &panicHook{}
+	var buf bytes.Buffer
+	logger := New(WithOutput(&buf), WithHooks(hook), WithFormatter(NewTextFormatter()))
+	defer logger.Close()
+
+	// This log call should not cause the test to panic
+	logger.Errorf("This will trigger a panic in the hook.")
+
+	// Wait for the panic to be recovered and logged
+	time.Sleep(50 * time.Millisecond)
+
+	output := buf.String()
+	if !strings.Contains(output, "A hook panicked") {
+		t.Errorf("expected output to contain panic recovery message, but it didn't. Output:\n%s", output)
+	}
+	if !strings.Contains(output, `panic="test panic in hook"`) {
+		t.Errorf("expected output to contain the panic message, but it didn't. Output:\n%s", output)
+	}
+}
+
+func TestLogger_Hooks_GracefulShutdown(t *testing.T) {
+	hook := newMockHook(LogLevelInfo)
+	hook.delay = 100 * time.Millisecond // This hook is slow
+	hook.wg.Add(1)
+
+	logger := New(WithHooks(hook))
+
+	startTime := time.Now()
+	logger.Infof("A slow hook will be fired.")
+
+	// This should block until the slow hook is finished.
+	err := logger.Close()
+	if err != nil {
+		t.Fatalf("Close returned an error: %v", err)
+	}
+	duration := time.Since(startTime)
+
+	if duration < hook.delay {
+		t.Errorf("Close did not wait for the hook to finish. Took %v, expected at least %v", duration, hook.delay)
+	}
+
+	fired := hook.FiredEntries()
+	if len(fired) != 1 {
+		t.Errorf("expected hook to have fired, but it didn't")
+	}
+}
+
+func TestLogger_Hooks_DefaultLogger(t *testing.T) {
+	// Restore default logger after test
+	originalStd := std
+	defer func() {
+		stdMutex.Lock()
+		std = originalStd
+		stdMutex.Unlock()
+	}()
+
+	hook := newMockHook(LogLevelError)
+	hook.wg.Add(1)
+
+	var buf bytes.Buffer
+	SetDefaultOutput(&buf)
+	SetDefaultHooks(hook)
+	defer Close() // Ensure the default logger's worker is closed
+
+	Errorf("global error log")
+
+	hook.wg.Wait() // Wait for the hook to fire
+
+	fired := hook.FiredEntries()
+	if len(fired) != 1 {
+		t.Fatalf("expected hook on default logger to fire, got %d entries", len(fired))
+	}
+	if fired[0].Message != "global error log" {
+		t.Errorf("unexpected message from hook: %s", fired[0].Message)
+	}
+
+	// --- Test clearing hooks ---
+	hook.Reset()
+	SetDefaultHooks() // Call with no args to clear hooks
+
+	Warnf("this should not be hooked now")
+	Errorf("this should not be hooked now either")
+
+	time.Sleep(50 * time.Millisecond) // Give time for any hooks to (incorrectly) fire
+
+	fired = hook.FiredEntries()
+	if len(fired) != 0 {
+		t.Fatalf("hooks should have been cleared, but %d entries were fired", len(fired))
+	}
+}
+
+func TestLogger_Hooks_Inheritance(t *testing.T) {
+	hook := newMockHook(LogLevelWarn)
+	hook.wg.Add(2)
+
+	parentLogger := New(WithHooks(hook))
+	defer parentLogger.Close()
+
+	childLogger := parentLogger.With("child_key", "child_value")
+	grandChildLogger := childLogger.Clone()
+
+	parentLogger.Warnf("from parent")
+	childLogger.Warnf("from child")
+	grandChildLogger.Infof("should not fire")
+
+	hook.wg.Wait()
+
+	fired := hook.FiredEntries()
+	if len(fired) != 2 {
+		t.Fatalf("expected 2 fired entries from parent and child, got %d", len(fired))
+	}
+
+	if fired[0].Message != "from parent" {
+		t.Errorf("unexpected first entry message: %s", fired[0].Message)
+	}
+	if fired[1].Message != "from child" {
+		t.Errorf("unexpected second entry message: %s", fired[1].Message)
+	}
+}
+
+func TestLogger_Hooks_AllLevels(t *testing.T) {
+	// A hook with no levels specified should fire for all levels.
+	hook := newMockHook()
+	hook.wg.Add(5) // For 5 log levels (Critical to Debug)
+
+	logger := New(
+		WithHooks(hook),
+		WithLogLevel(LogLevelDebug),
+	)
+	defer logger.Close()
+
+	logger.Criticalf("1")
+	logger.Errorf("2")
+	logger.Warnf("3")
+	logger.Infof("4")
+	logger.Debugf("5")
+
+	hook.wg.Wait()
+
+	fired := hook.FiredEntries()
+	if len(fired) != 5 {
+		t.Fatalf("expected hook to fire for all 5 levels, got %d", len(fired))
+	}
 }

@@ -15,17 +15,17 @@ import (
 
 // levelColorMap maps log levels to their corresponding color functions.
 // This is a private implementation detail of the textFormatter.
-var levelColorMap = map[string]*color.Color{
-	string(LogLevelError):    color.New(color.FgRed),
-	string(LogLevelCritical): color.New(color.FgHiRed, color.Bold),
-	string(LogLevelWarn):     color.New(color.FgYellow),
-	string(LogLevelInfo):     color.New(color.FgGreen),
-	string(LogLevelDebug):    color.New(color.FgCyan),
+var levelColorMap = map[LogLevel]*color.Color{
+	LogLevelError:    color.New(color.FgRed),
+	LogLevelCritical: color.New(color.FgHiRed, color.Bold),
+	LogLevelWarn:     color.New(color.FgYellow),
+	LogLevelInfo:     color.New(color.FgGreen),
+	LogLevelDebug:    color.New(color.FgCyan),
 }
 
 // Formatter is an interface for converting a logEntry into a byte slice.
 type Formatter interface {
-	Format(entry *logEntry) ([]byte, error)
+	Format(entry *LogEntry) ([]byte, error)
 }
 
 // jsonFormatter formats log entries as JSON.
@@ -37,7 +37,7 @@ func NewJSONFormatter() *jsonFormatter {
 }
 
 // Format converts a logEntry to JSON format.
-func (f *jsonFormatter) Format(e *logEntry) ([]byte, error) {
+func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 	m := make(map[string]interface{})
 
 	for k, v := range e.Payload {
@@ -112,7 +112,7 @@ func WithColor(enabled bool) TextFormatterOption {
 }
 
 // Format converts a logEntry to a single-line text format.
-func (f *textFormatter) Format(e *logEntry) ([]byte, error) {
+func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
 	useColor := f.enableColor
