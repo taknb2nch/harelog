@@ -143,6 +143,73 @@ logger := harelog.New(
 
 ---
 
+## Extending with Hooks
+
+Hooks provide a powerful way to extend `harelog`'s functionality, turning it into a logging platform. You can use hooks to send log entries to external services like Sentry, Slack, or a custom database based on the log level.
+
+Hook execution is fully **asynchronous** and **panic-safe**, meaning a slow or faulty hook will never impact your application's performance or stability.
+
+### Implementing a Custom Hook
+
+To create a hook, simply implement the `harelog.Hook` interface.
+
+```go
+// simple_hook.go
+package main
+
+import (
+	"fmt"
+	"github.com/taknb2nch/harelog"
+)
+
+// SimpleHook is a custom hook that prints to Stderr for specific levels.
+type SimpleHook struct{}
+
+// Levels specifies that this hook should only fire for Error and Critical logs.
+func (h *SimpleHook) Levels() []harelog.LogLevel {
+	return []harelog.LogLevel{harelog.LogLevelError, harelog.LogLevelCritical}
+}
+
+// Fire is the action to be taken when a log event matches the levels.
+func (h *SimpleHook) Fire(entry *harelog.LogEntry) error {
+	// Here you would typically send the entry to an external service.
+	// For this example, we'll just print it.
+	fmt.Fprintf(os.Stderr, "[HOOK] %s: %s\n", entry.Severity, entry.Message)
+	return nil
+}
+```
+
+### Configuring Hooks
+
+Register your custom hook at initialization using the `WithHooks` option.
+
+**Important:** Because hooks run in the background, you must call `logger.Close()` (or `harelog.Close()` for the default logger) to ensure all buffered hook events are sent before your application exits. Using `defer` is the recommended approach.
+
+```go
+// main.go
+package main
+
+import (
+	"github.com/taknb2nch/harelog"
+)
+
+func main() {
+	// Create an instance of your custom hook.
+	myHook := &SimpleHook{}
+
+	// Register the hook with a new logger.
+	logger := harelog.New(harelog.WithHooks(myHook))
+
+	// Ensure graceful shutdown for the hook worker.
+	defer logger.Close()
+
+	logger.Info("This will not trigger the hook.")
+	logger.Error("This ERROR will trigger the hook!")
+}
+```
+
+---
+
 ## Special Fields
 
 When you provide the following keys to a `...w` function or the `With` method, the logger interprets them in a special way.

@@ -11,9 +11,9 @@ func TestJSONFormatter_Format(t *testing.T) {
 	f := NewJSONFormatter()
 	testTime := time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC)
 
-	entry := &logEntry{
+	entry := &LogEntry{
 		Message:  "json format test",
-		Severity: string(LogLevelInfo),
+		Severity: LogLevelInfo,
 		Time:     jsonTime{testTime},
 		Payload: map[string]interface{}{
 			"user": "gopher",
@@ -52,23 +52,23 @@ func TestTextFormatter_Format(t *testing.T) {
 
 		tests := []struct {
 			name     string
-			entry    *logEntry
+			entry    *LogEntry
 			expected string
 		}{
 			{
 				name: "Simple message with no payload",
-				entry: &logEntry{
+				entry: &LogEntry{
 					Message:  "server started",
-					Severity: string(LogLevelInfo),
+					Severity: LogLevelInfo,
 					Time:     jsonTime{testTime},
 				},
 				expected: `2025-09-30T14:00:00Z [INFO] server started`,
 			},
 			{
 				name: "Message with simple payload",
-				entry: &logEntry{
+				entry: &LogEntry{
 					Message:  "request failed",
-					Severity: string(LogLevelError),
+					Severity: LogLevelError,
 					Time:     jsonTime{testTime},
 					Payload: map[string]interface{}{
 						"status": 500,
@@ -79,9 +79,9 @@ func TestTextFormatter_Format(t *testing.T) {
 			},
 			{
 				name: "Message with all special fields",
-				entry: &logEntry{
+				entry: &LogEntry{
 					Message:        "complex event",
-					Severity:       string(LogLevelWarn),
+					Severity:       LogLevelWarn,
 					Time:           jsonTime{testTime},
 					Trace:          "trace-id-123",
 					SpanID:         "span-id-456",
@@ -119,9 +119,9 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtests specifically for color logic ---
 	t.Run("Colorization logic", func(t *testing.T) {
-		entry := &logEntry{
+		entry := &LogEntry{
 			Message:  "error message",
-			Severity: string(LogLevelError),
+			Severity: LogLevelError,
 			Time:     jsonTime{testTime},
 		}
 
@@ -131,7 +131,7 @@ func TestTextFormatter_Format(t *testing.T) {
 			got := string(b)
 
 			// Manually construct the expected colored string for a precise check.
-			c := levelColorMap[string(LogLevelError)]
+			c := levelColorMap[LogLevelError]
 			c.EnableColor() // Ensure color is enabled for the check
 			expectedSubstring := c.Sprint("[ERROR]")
 
