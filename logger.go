@@ -19,16 +19,16 @@ import (
 )
 
 // LogLevel defines the severity level of a log entry.
-type logLevel string
+type LogLevel string
 
 const (
-	LogLevelOff      logLevel = "OFF"
-	LogLevelCritical logLevel = "CRITICAL"
-	LogLevelError    logLevel = "ERROR"
-	LogLevelWarn     logLevel = "WARN"
-	LogLevelInfo     logLevel = "INFO"
-	LogLevelDebug    logLevel = "DEBUG"
-	LogLevelAll      logLevel = "ALL"
+	LogLevelOff      LogLevel = "OFF"
+	LogLevelCritical LogLevel = "CRITICAL"
+	LogLevelError    LogLevel = "ERROR"
+	LogLevelWarn     LogLevel = "WARN"
+	LogLevelInfo     LogLevel = "INFO"
+	LogLevelDebug    LogLevel = "DEBUG"
+	LogLevelAll      LogLevel = "ALL"
 )
 
 type logLevelValue int
@@ -74,7 +74,7 @@ var (
 	osExit = os.Exit
 )
 
-var levelMap = map[logLevel]logLevelValue{
+var levelMap = map[LogLevel]logLevelValue{
 	LogLevelOff:      logLevelValueOff,
 	LogLevelCritical: logLevelValueCritical,
 	LogLevelError:    logLevelValueError,
@@ -119,8 +119,8 @@ func setupLogLevelFromEnv() {
 
 // ParseLogLevel parses a string into a LogLevel.
 // It is case-insensitive. It returns an error if the input string is not a valid log level.
-func ParseLogLevel(levelStr string) (logLevel, error) {
-	level := logLevel(strings.ToUpper(levelStr))
+func ParseLogLevel(levelStr string) (LogLevel, error) {
+	level := LogLevel(strings.ToUpper(levelStr))
 	if _, ok := levelMap[level]; ok {
 		return level, nil
 	}
@@ -158,10 +158,10 @@ func (t jsonTime) MarshalJSON() ([]byte, error) {
 
 // --- Log Entry Structure ---
 
-// logEntry is the internal data container for a single log entry.
-type logEntry struct {
+// LogEntry is the internal data container for a single log entry.
+type LogEntry struct {
 	Message        string          `json:"message"`
-	Severity       string          `json:"severity,omitempty"`
+	Severity       LogLevel        `json:"severity,omitempty"`
 	Trace          string          `json:"logging.googleapis.com/trace,omitempty"`
 	SpanID         string          `json:"logging.googleapis.com/spanId,omitempty"`
 	TraceSampled   *bool           `json:"logging.googleapis.com/trace_sampled,omitempty"`
@@ -178,7 +178,7 @@ type logEntry struct {
 }
 
 // applyKVs applies key-value pairs to a log entry, handling special keys.
-func (e *logEntry) applyKVs(kvs ...interface{}) {
+func (e *LogEntry) applyKVs(kvs ...interface{}) {
 	n := len(kvs)
 	if n%2 != 0 {
 		// confirm whether last key is string or not
@@ -245,6 +245,13 @@ type Logger struct {
 	traceContextKey interface{}
 
 	formatter Formatter
+
+	// for hooks
+	hookBufferSize int
+	hooks          []Hook
+	hooksByLevel   map[LogLevel][]Hook
+	hookChan       chan *LogEntry
+	hookWg         sync.WaitGroup
 }
 
 // New creates a new Logger with default settings.
@@ -264,18 +271,122 @@ func New(opts ...Option) *Logger {
 		traceContextKey:    nil,
 		sourceLocationMode: SourceLocationModeNever,
 		formatter:          NewJSONFormatter(),
+		hookBufferSize:     100,
 	}
 
 	for _, opt := range opts {
 		opt(logger)
 	}
 
+	if len(logger.hooks) > 0 {
+		logger.hooksByLevel = make(map[LogLevel][]Hook)
+
+		for _, hook := range logger.hooks {
+			levels := hook.Levels()
+
+			if len(levels) == 0 {
+				// If hook.Levels() is empty, it should fire for all levels.
+				for level := range levelMap {
+					if level == LogLevelOff {
+						continue
+					}
+
+					logger.hooksByLevel[level] = append(logger.hooksByLevel[level], hook)
+				}
+			} else {
+				for _, level := range levels {
+					if level == LogLevelOff {
+						continue
+					}
+
+					logger.hooksByLevel[level] = append(logger.hooksByLevel[level], hook)
+				}
+			}
+		}
+
+		logger.hookChan = make(chan *LogEntry, logger.hookBufferSize)
+		logger.hookWg.Add(1)
+
+		go logger.runHookWorker()
+	}
+
 	return logger
 }
 
-// Clone creates a new copy of the default logger.
-func Clone() *Logger {
-	return std.Clone()
+// Close gracefully shuts down the logger's background processes, such as the hook worker.
+// It ensures that all buffered log entries for hooks are processed before returning.
+// It's recommended to call this via defer when the application is shutting down.
+func (l *Logger) Close() error {
+	// If the hook worker is running, close the channel and wait for it to finish.
+	if l.hookChan != nil {
+		close(l.hookChan)
+
+		l.hookWg.Wait()
+	}
+
+	return nil
+}
+
+// runHookWorker is the background goroutine that processes log entries for hooks.
+func (l *Logger) runHookWorker() {
+	defer l.hookWg.Done()
+
+	for entry := range l.hookChan {
+		if entry != nil {
+			l.fireHooks(entry)
+		}
+	}
+}
+
+// fireHooks iterates over registered hooks and calls their Fire method if the level matches.
+func (l *Logger) fireHooks(entry *LogEntry) {
+	hooksForLevel, ok := l.hooksByLevel[LogLevel(entry.Severity)]
+	if !ok {
+		return
+	}
+
+	for _, hook := range hooksForLevel {
+		entryCopy := l.defensiveCopy(entry)
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					e := &LogEntry{
+						Severity: LogLevelError,
+						Time:     jsonTime{time.Now()},
+						Message:  "A hook panicked",
+						Payload:  map[string]any{"panic": r},
+					}
+
+					if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
+						(l.sourceLocationMode == SourceLocationModeErrorOrAbove && l.logLevel <= logLevelValueError)) {
+						e.SourceLocation = l.findCaller()
+					}
+
+					l.print(e)
+				}
+			}()
+
+			_ = hook.Fire(entryCopy)
+		}()
+	}
+}
+
+// defensiveCopy creates a safe copy of a log entry for use in hooks.
+func (l *Logger) defensiveCopy(entry *LogEntry) *LogEntry {
+	entryCopy := *entry
+
+	if entry.Payload != nil {
+		payload := make(map[string]interface{}, len(entry.Payload))
+
+		for k, v := range entry.Payload {
+			payload[k] = v
+		}
+
+		entryCopy.Payload = payload
+	}
+
+	return &entryCopy
 }
 
 // Clone creates a new copy of the logger.
@@ -294,6 +405,9 @@ func (l *Logger) Clone() *Logger {
 		traceContextKey:    l.traceContextKey,
 		sourceLocationMode: l.sourceLocationMode,
 		formatter:          l.formatter,
+		hooks:              l.hooks,
+		hooksByLevel:       make(map[LogLevel][]Hook),
+		hookChan:           l.hookChan,
 	}
 
 	for k, v := range l.labels {
@@ -302,6 +416,10 @@ func (l *Logger) Clone() *Logger {
 
 	for k, v := range l.payload {
 		newLogger.payload[k] = v
+	}
+
+	for k, v := range l.hooksByLevel {
+		newLogger.hooksByLevel[k] = v
 	}
 
 	return newLogger
@@ -583,12 +701,23 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 
 // dispatch is the single, central method that handles all log entry creation and printing.
 // It is called *after* a level check has been performed by a public method.
-func (l *Logger) dispatch(ctx context.Context, level logLevel, msg string, kvs ...interface{}) {
+func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
 		e.SourceLocation = l.findCaller()
+	}
+
+	if l.hookChan != nil {
+		// Use a non-blocking send to prevent the application from stalling
+		// if the hook channel buffer is full.
+		select {
+		case l.hookChan <- e:
+		default:
+			// The entry is dropped if the channel is full.
+			// This is a trade-off to prioritize application performance over hook reliability under extreme load.
+		}
 	}
 
 	l.print(e)
@@ -597,10 +726,10 @@ func (l *Logger) dispatch(ctx context.Context, level logLevel, msg string, kvs .
 // createEntry is the single, central helper for creating log entries.
 // It accepts a context (which can be nil) and correctly applies values with the
 // precedence: method args > logger context > context.Context.
-func (l *Logger) createEntry(ctx context.Context, level logLevel, msg string, kvs ...interface{}) *logEntry {
+func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) *LogEntry {
 	// 1. Create the base entry.
-	e := &logEntry{
-		Severity:      string(level),
+	e := &LogEntry{
+		Severity:      level,
 		Message:       l.prefix + msg,
 		Trace:         l.trace,
 		SpanID:        l.spanId,
@@ -647,7 +776,7 @@ func (l *Logger) createEntry(ctx context.Context, level logLevel, msg string, kv
 }
 
 // print writes the log entry to the logger's output.
-func (l *Logger) print(e *logEntry) {
+func (l *Logger) print(e *LogEntry) {
 	out, err := l.formatter.Format(e)
 	if err != nil {
 		log.Printf("failed to format log entry: %v", err)
@@ -713,7 +842,7 @@ func (l *Logger) IsCriticalEnabled() bool {
 }
 
 // WithLogLevel returns a new logger instance with the specified log level.
-func (l *Logger) WithLogLevel(level logLevel) *Logger {
+func (l *Logger) WithLogLevel(level LogLevel) *Logger {
 	if _, ok := levelMap[level]; !ok {
 		panic(fmt.Sprintf("harelog: invalid log level provided to (*Logger).WithLogLevel: %q", level))
 	}
@@ -864,11 +993,20 @@ func (l *Logger) WithCorrelationID(correlationID string) *Logger {
 	return newLogger
 }
 
+// Clone creates a new copy of the default logger.
+func Clone() *Logger {
+	return std.Clone()
+}
+
 // SetDefaultLogLevel sets the log level for the default logger.
 // The provided level should be validated with ParseLogLevel first.
-func SetDefaultLogLevel(level logLevel) {
+func SetDefaultLogLevel(level LogLevel) {
 	stdMutex.Lock()
 	defer stdMutex.Unlock()
+
+	if _, ok := levelMap[level]; !ok {
+		panic(fmt.Sprintf("harelog: invalid log level provided to SetDefaultLogLevel: %q", level))
+	}
 
 	std = std.WithLogLevel(level)
 }
@@ -895,6 +1033,58 @@ func SetDefaultAutoSource(mode sourceLocationMode) {
 	defer stdMutex.Unlock()
 
 	std = std.WithAutoSource(mode)
+}
+
+// SetDefaultHooks sets hooks for the default logger.
+// This function is safe for concurrent use.
+// It replaces the existing default logger with a new one containing the specified hooks.
+func SetDefaultHooks(hooks ...Hook) {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	// Gracefully close the old logger's worker if it exists.
+	if std.hookChan != nil {
+		_ = std.Close()
+	}
+
+	// --- Preserve existing settings ---
+	// Find the current LogLevel string from the internal logLevelValue.
+	var currentLevel LogLevel = LogLevelInfo // Default fallback
+	for l, v := range levelMap {
+		if v == std.logLevel {
+			currentLevel = l
+			break
+		}
+	}
+
+	// Convert payload map to a slice for WithFields.
+	payloadKVs := make([]interface{}, 0, len(std.payload)*2)
+
+	for k, v := range std.payload {
+		payloadKVs = append(payloadKVs, k, v)
+	}
+
+	opts := []Option{
+		WithOutput(std.out),
+		WithLogLevel(currentLevel),
+		WithFormatter(std.formatter),
+		WithAutoSource(std.sourceLocationMode),
+		WithProjectID(std.projectID),
+		WithPrefix(std.prefix),
+		WithLabels(std.labels),
+		WithFields(payloadKVs...),
+		WithHookBufferSize(std.hookBufferSize),
+		WithHooks(hooks...),
+	}
+
+	// WithTraceContextKey panics on nil, so only add it if it exists.
+	if std.traceContextKey != nil {
+		opts = append(opts, WithTraceContextKey(std.traceContextKey))
+	}
+	// --- End of preserving settings ---
+
+	// Create a new logger with the new hooks, preserving all other settings.
+	std = New(opts...)
 }
 
 // WithProjectID sets the initial Google Cloud Project ID.
@@ -1286,6 +1476,16 @@ func Fatalw(msg string, kvs ...interface{}) {
 	std.Fatalw(msg, kvs...)
 }
 
+// Close gracefully shuts down the default logger's background processes,
+// such as the hook worker. It's recommended to call this via defer in the main function
+// to ensure all buffered logs for hooks are processed before the application exits.
+func Close() error {
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	return std.Close()
+}
+
 // isDebugEnabled returns
 func isDebugEnabled(level logLevelValue) bool {
 	return level >= logLevelValueDebug
@@ -1334,7 +1534,7 @@ func sprintlnMessage(v ...interface{}) string {
 type Option func(*Logger)
 
 // WithLogLevel is a functional option that sets the initial log level for the logger.
-func WithLogLevel(level logLevel) Option {
+func WithLogLevel(level LogLevel) Option {
 	return func(l *Logger) {
 		lv, ok := levelMap[level]
 		if !ok {
@@ -1430,5 +1630,27 @@ func WithFields(kvs ...interface{}) Option {
 			l.payload[key] = kvs[i+1]
 		}
 
+	}
+}
+
+// WithHookBufferSize sets the buffer size for the hook channel.
+// The default is 100. A larger buffer can handle higher log volumes without
+// dropping hook events, but consumes more memory.
+func WithHookBufferSize(size int) Option {
+	return func(l *Logger) {
+		if size > 0 {
+			l.hookBufferSize = size
+		}
+	}
+}
+
+// WithHooks is a functional option that registers hooks with the logger.
+// Hooks are triggered asynchronously when a log entry is created at a level
+// specified in the hook's Levels() method.
+func WithHooks(hooks ...Hook) Option {
+	return func(l *Logger) {
+		l.hooks = make([]Hook, 0, len(hooks))
+
+		l.hooks = append(l.hooks, hooks...)
 	}
 }
