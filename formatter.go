@@ -115,14 +115,35 @@ func WithTextLevelColor(enabled bool) TextFormatterOption {
 func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
-	useColor := f.enableColor
+	useColor := f.shouldUseColor()
 
-	if !f.isEnableColorSet {
-		// If user hasn't specified, auto-detect based on TTY.
-		// Note: This check assumes a standard output file descriptor.
-		useColor = isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
+	f.writeHeader(&b, e, useColor)
+
+	fields := f.aggregateFields(e)
+
+	if len(fields) > 0 {
+		b.WriteString(" {")
+
+		f.writeFields(&b, fields)
+
+		b.WriteString("}")
 	}
 
+	return b.Bytes(), nil
+}
+
+// should UseColor determines if color should be used for the output.
+func (f *textFormatter) shouldUseColor() bool {
+	if f.isEnableColorSet {
+		return f.enableColor
+	}
+
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
+}
+
+// writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
+// It returns the determined 'useColor' boolean for use by field formatters.
+func (f *textFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
 	// Timestamp
 	b.WriteString(e.Time.Format(time.RFC3339))
 	b.WriteString(" ")
@@ -146,6 +167,11 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	// Message
 	b.WriteString(strings.TrimRight(e.Message, "\n"))
 
+	return useColor
+}
+
+// aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
+func (f *textFormatter) aggregateFields(e *LogEntry) map[string]interface{} {
 	// Aggregate all structured data into a single map
 	fields := make(map[string]interface{})
 
@@ -191,38 +217,34 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	// // Add payload only if it exists.
-	if len(fields) > 0 {
-		b.WriteString(" {")
+	return fields
+}
 
-		keys := make([]string, 0, len(fields))
+// writeFields formats and appends the key-value pairs to the buffer.
+func (f *textFormatter) writeFields(b *bytes.Buffer, fields map[string]interface{}) {
+	keys := make([]string, 0, len(fields))
 
-		for k := range fields {
-			keys = append(keys, k)
-		}
-
-		sort.Strings(keys)
-
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-
-			b.WriteString(k)
-			b.WriteString("=")
-
-			// Handle strings and other types differently for quoting.
-			val := fields[k]
-
-			if s, ok := val.(string); ok {
-				b.WriteString(fmt.Sprintf("%q", s))
-			} else {
-				b.WriteString(fmt.Sprint(val))
-			}
-		}
-
-		b.WriteString("}")
+	for k := range fields {
+		keys = append(keys, k)
 	}
 
-	return b.Bytes(), nil
+	sort.Strings(keys)
+
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+
+		b.WriteString(k)
+		b.WriteString("=")
+
+		// Handle strings and other types differently for quoting.
+		val := fields[k]
+
+		if s, ok := val.(string); ok {
+			b.WriteString(fmt.Sprintf("%q", s))
+		} else {
+			b.WriteString(fmt.Sprint(val))
+		}
+	}
 }
