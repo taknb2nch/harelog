@@ -48,7 +48,7 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
-		f := NewTextFormatter(WithColor(false)) // Explicitly disable color
+		f := NewTextFormatter(WithTextLevelColor(false)) // Explicitly disable color
 
 		tests := []struct {
 			name     string
@@ -126,7 +126,7 @@ func TestTextFormatter_Format(t *testing.T) {
 		}
 
 		t.Run("WithColor(true) enables color", func(t *testing.T) {
-			f := NewTextFormatter(WithColor(true))
+			f := NewTextFormatter(WithTextLevelColor(true))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -141,7 +141,7 @@ func TestTextFormatter_Format(t *testing.T) {
 		})
 
 		t.Run("WithColor(false) disables color", func(t *testing.T) {
-			f := NewTextFormatter(WithColor(false))
+			f := NewTextFormatter(WithTextLevelColor(false))
 			b, _ := f.Format(entry)
 			got := string(b)
 

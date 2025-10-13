@@ -103,8 +103,8 @@ func NewTextFormatter(opts ...TextFormatterOption) Formatter {
 	return formatter
 }
 
-// WithColor is an option to enable or disable color output for the TextFormatter.
-func WithColor(enabled bool) TextFormatterOption {
+// WithTextLevelColor is an option to enable or disable color output for the TextFormatter.
+func WithTextLevelColor(enabled bool) TextFormatterOption {
 	return func(f *textFormatter) {
 		f.enableColor = enabled
 		f.isEnableColorSet = true
