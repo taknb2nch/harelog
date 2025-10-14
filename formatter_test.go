@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 // TestJSONFormatter_Format directly tests the output of the jsonFormatter.
@@ -164,5 +166,162 @@ func TestTextFormatter_Format(t *testing.T) {
 				t.Errorf("output should not contain any ANSI escape codes in a non-TTY environment, but found some in %q", got)
 			}
 		})
+	})
+}
+
+func TestConsoleFormatter(t *testing.T) {
+	// Temporarily disable color for fatih/color's auto-detection to ensure
+	// our enable/disable logic works as expected.
+	originalNoColor := color.NoColor
+	color.NoColor = true
+	defer func() { color.NoColor = originalNoColor }()
+
+	entry := &LogEntry{
+		Time:     jsonTime{time.Date(2025, 10, 14, 13, 30, 0, 0, time.UTC)},
+		Severity: LogLevelInfo,
+		Message:  "user action",
+		Payload: map[string]interface{}{
+			"userID":    "user-123",
+			"requestID": "req-abc",
+			"action":    "logout",
+		},
+	}
+
+	t.Run("Basic Highlighting", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(true),
+			WithKeyHighlight("userID", FgCyan),
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		// Check for cyan color code around the userID key-value pair
+		cyan := color.New(color.FgCyan)
+		cyan.EnableColor() // Explicitly enable color for this test instance
+		expectedHighlight := cyan.Sprint(`userID="user-123"`)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("output should contain cyan highlighted userID.\nGot: %s\nWant containing: %s", output, expectedHighlight)
+		}
+		// Check that other keys are not colored
+		expectedNonHighlight := cyan.Sprint(`action="logout"`)
+		if strings.Contains(output, expectedNonHighlight) {
+			t.Errorf("action key should not be highlighted: %s", output)
+		}
+	})
+
+	t.Run("Highlight with Style", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(true),
+			WithKeyHighlight("userID", FgCyan, AttrBold),
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		cyanBold := color.New(color.FgCyan, color.Bold)
+		cyanBold.EnableColor()
+		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("output should contain bold cyan highlighted userID.\nGot: %s", output)
+		}
+	})
+
+	t.Run("Rule: Last Color Wins", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(true),
+			WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		yellow := color.New(color.FgYellow)
+		yellow.EnableColor()
+		expectedHighlight := yellow.Sprint(`userID="user-123"`)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("expected userID to be yellow (last color wins).\nGot: %s", output)
+		}
+	})
+
+	t.Run("Rule: Styles are Additive", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(true),
+			WithKeyHighlight("userID", AttrBold, AttrUnderline),
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		boldUnderline := color.New(color.Bold, color.Underline)
+		boldUnderline.EnableColor()
+		expectedHighlight := boldUnderline.Sprint(`userID="user-123"`)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("expected userID to be bold and underlined (styles additive).\nGot: %s", output)
+		}
+	})
+
+	t.Run("Rule: Last Key Config Overwrites", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(true),
+			WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
+			WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		greenUnderline := color.New(color.FgGreen, color.Underline)
+		greenUnderline.EnableColor()
+		expectedHighlight := greenUnderline.Sprint(`userID="user-123"`)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("expected userID to be green and underlined (last config overwrites).\nGot: %s", output)
+		}
+	})
+
+	t.Run("Color Disabled", func(t *testing.T) {
+		f := NewConsoleFormatter(
+			WithConsoleLevelColor(false), // Explicitly disable color
+			WithKeyHighlight("userID", FgCyan, AttrBold),
+		)
+
+		b, err := f.Format(entry)
+		if err != nil {
+			t.Fatalf("Format() error = %v", err)
+		}
+
+		output := string(b)
+		// Check for plain text, no ANSI codes
+		if !strings.Contains(output, `userID="user-123"`) {
+			t.Errorf("output should contain plain userID: %s", output)
+		}
+		if strings.Contains(output, "\x1b[") {
+			t.Errorf("output should not contain any ANSI color codes when disabled: %s", output)
+		}
+	})
+
+	t.Run("Panic on Invalid Attribute", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected NewConsoleFormatter to panic with invalid ColorAttribute, but it did not")
+			}
+		}()
+		// This should panic because 99 is not a valid ColorAttribute
+		_ = NewConsoleFormatter(WithKeyHighlight("userID", ColorAttribute(99)))
 	})
 }
