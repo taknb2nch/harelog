@@ -106,18 +106,47 @@ prodLogger.Infof("This will NOT have source info.")
 prodLogger.Errorf("This WILL have source info.")
 ```
 
-### Output Format (Formatter) & Color
+### Output Formatters
 
-By default, logs are in JSON format. For local development, you can switch to a human-readable text format with "smart" color-coding (enabled by default for terminals).
+`harelog` provides multiple formatters to suit different environments. The default is the `JSONFormatter`, ideal for production and log collection systems. For development, you can choose a more human-readable format.
+
+#### TextFormatter
+
+The `TextFormatter` provides a simple, single-line text output. By default, it automatically enables color-coding for log levels when outputting to a terminal.
 
 ```go
-// Use the WithFormatter option to switch to the text logger
+// Use the WithFormatter option to switch to the text logger.
 logger := harelog.New(
     harelog.WithFormatter(harelog.NewTextFormatter()),
 )
 
-// You can also explicitly control color
-colorFormatter := harelog.NewTextFormatter(harelog.WithColor(true))
+// You can also explicitly control the log level coloring.
+textFormatter := harelog.NewTextFormatter(harelog.WithTextLevelColor(true))
+```
+
+#### ConsoleFormatter (for Development)
+
+For the ultimate developer experience, the `ConsoleFormatter` extends the `TextFormatter` with the ability to **highlight specific key-value pairs**. This makes it incredibly easy to spot important information like a `userID` or `traceID` in a sea of logs.
+
+```go
+// Use the ConsoleFormatter to highlight important keys.
+formatter := harelog.NewConsoleFormatter(
+    // Enable coloring for log levels (e.g., [INFO] in green).
+    harelog.WithConsoleLevelColor(true),
+    
+    // Define your highlight rules.
+    harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
+    harelog.WithKeyHighlight("requestID", harelog.FgMagenta),
+    harelog.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
+)
+
+logger := harelog.New(harelog.WithFormatter(formatter))
+
+logger.Errorw("Failed to connect to database",
+    "userID", "user-789",
+    "requestID", "req-ghi-333",
+    "error", "connection refused",
+)
 ```
 
 ### Default Log Level via Environment Variable
