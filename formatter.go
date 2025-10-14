@@ -90,7 +90,7 @@ type textFormatter struct {
 type TextFormatterOption func(*textFormatter)
 
 // NewTextFormatter creates a new TextFormatter.
-func NewTextFormatter(opts ...TextFormatterOption) Formatter {
+func NewTextFormatter(opts ...TextFormatterOption) *textFormatter {
 	formatter := &textFormatter{
 		enableColor:      false,
 		isEnableColorSet: false,
@@ -103,8 +103,8 @@ func NewTextFormatter(opts ...TextFormatterOption) Formatter {
 	return formatter
 }
 
-// WithColor is an option to enable or disable color output for the TextFormatter.
-func WithColor(enabled bool) TextFormatterOption {
+// WithTextLevelColor is an option to enable or disable color output for the TextFormatter.
+func WithTextLevelColor(enabled bool) TextFormatterOption {
 	return func(f *textFormatter) {
 		f.enableColor = enabled
 		f.isEnableColorSet = true
@@ -115,14 +115,35 @@ func WithColor(enabled bool) TextFormatterOption {
 func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
-	useColor := f.enableColor
+	useColor := f.shouldUseColor()
 
-	if !f.isEnableColorSet {
-		// If user hasn't specified, auto-detect based on TTY.
-		// Note: This check assumes a standard output file descriptor.
-		useColor = isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
+	f.writeHeader(&b, e, useColor)
+
+	fields := f.aggregateFields(e)
+
+	if len(fields) > 0 {
+		b.WriteString(" {")
+
+		f.writeFields(&b, fields)
+
+		b.WriteString("}")
 	}
 
+	return b.Bytes(), nil
+}
+
+// should UseColor determines if color should be used for the output.
+func (f *textFormatter) shouldUseColor() bool {
+	if f.isEnableColorSet {
+		return f.enableColor
+	}
+
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
+}
+
+// writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
+// It returns the determined 'useColor' boolean for use by field formatters.
+func (f *textFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
 	// Timestamp
 	b.WriteString(e.Time.Format(time.RFC3339))
 	b.WriteString(" ")
@@ -146,6 +167,11 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	// Message
 	b.WriteString(strings.TrimRight(e.Message, "\n"))
 
+	return useColor
+}
+
+// aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
+func (f *textFormatter) aggregateFields(e *LogEntry) map[string]interface{} {
 	// Aggregate all structured data into a single map
 	fields := make(map[string]interface{})
 
@@ -191,38 +217,213 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	// // Add payload only if it exists.
+	return fields
+}
+
+// writeFields formats and appends the key-value pairs to the buffer.
+func (f *textFormatter) writeFields(b *bytes.Buffer, fields map[string]interface{}) {
+	keys := make([]string, 0, len(fields))
+
+	for k := range fields {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+
+		b.WriteString(k)
+		b.WriteString("=")
+
+		// Handle strings and other types differently for quoting.
+		val := fields[k]
+
+		if s, ok := val.(string); ok {
+			b.WriteString(fmt.Sprintf("%q", s))
+		} else {
+			b.WriteString(fmt.Sprint(val))
+		}
+	}
+}
+
+// ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
+type ColorAttribute int
+
+// Public constants for text attributes.
+// These are used with WithKeyHighlight to configure the ConsoleFormatter.
+
+// Constants for foreground text colors.
+const (
+	FgBlack ColorAttribute = iota + 1
+	FgRed
+	FgGreen
+	FgYellow
+	FgBlue
+	FgMagenta
+	FgCyan
+	FgWhite
+)
+
+// Constants for text style attributes.
+const (
+	AttrBold ColorAttribute = iota + 20
+	AttrUnderline
+)
+
+// consoleFormatter provides a rich, developer-focused text format.
+// It supports highlighting specific key-value pairs to improve readability.
+type consoleFormatter struct {
+	*textFormatter
+	highlightColors map[string]*color.Color
+}
+
+// ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
+type ConsoleFormatterOption func(*consoleFormatter)
+
+// NewConsoleFormatter creates a new ConsoleFormatter.
+func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
+	formatter := &consoleFormatter{
+		textFormatter:   &textFormatter{},
+		highlightColors: make(map[string]*color.Color),
+	}
+
+	for _, opt := range opts {
+		opt(formatter)
+	}
+
+	return formatter
+}
+
+// WithConsoleLevelColor is an option to enable or disable log level color output for the ConsoleFormatter.
+func WithConsoleLevelColor(enabled bool) ConsoleFormatterOption {
+	return func(f *consoleFormatter) {
+		f.enableColor = enabled
+		f.isEnableColorSet = true
+	}
+}
+
+// WithKeyHighlight is a functional option for the ConsoleFormatter that configures
+// highlighting for a specific key. This option can be passed multiple times.
+// - Color attributes (Fg...): The last one specified wins.
+// - Style attributes (Attr...): All specified styles are applied.
+func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
+	return func(f *consoleFormatter) {
+		var colorAttr color.Attribute
+		isColorSet := false
+
+		styleAttrs := make(map[color.Attribute]struct{})
+
+		for _, attr := range attrs {
+			cAttr := toFatihAttribute(attr)
+
+			if cAttr >= color.FgBlack && cAttr <= color.FgWhite {
+				colorAttr = cAttr
+				isColorSet = true
+			} else {
+				styleAttrs[cAttr] = struct{}{}
+			}
+		}
+
+		finalAttrs := make([]color.Attribute, 0, len(styleAttrs)+1)
+
+		if isColorSet {
+			finalAttrs = append(finalAttrs, colorAttr)
+		}
+
+		for attr := range styleAttrs {
+			finalAttrs = append(finalAttrs, attr)
+		}
+
+		f.highlightColors[key] = color.New(finalAttrs...)
+	}
+}
+
+// Format overrides the default TextFormatter's field formatting to add highlighting.
+func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
+
+	// Since ConsoleFormatter embeds textFormatter, it can call its methods directly.
+	useColor := f.shouldUseColor()
+	f.writeHeader(&b, e, useColor)
+
+	// Aggregate fields
+	fields := f.aggregateFields(e)
+
+	// Custom field formatting with highlighting
 	if len(fields) > 0 {
 		b.WriteString(" {")
 
-		keys := make([]string, 0, len(fields))
-
-		for k := range fields {
-			keys = append(keys, k)
-		}
-
-		sort.Strings(keys)
-
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-
-			b.WriteString(k)
-			b.WriteString("=")
-
-			// Handle strings and other types differently for quoting.
-			val := fields[k]
-
-			if s, ok := val.(string); ok {
-				b.WriteString(fmt.Sprintf("%q", s))
-			} else {
-				b.WriteString(fmt.Sprint(val))
-			}
-		}
+		f.writeHighlightedFields(&b, fields, useColor)
 
 		b.WriteString("}")
 	}
 
 	return b.Bytes(), nil
+}
+
+// writeHighlightedFields formats and appends key-value pairs with highlighting.
+func (f *consoleFormatter) writeHighlightedFields(b *bytes.Buffer, fields map[string]interface{}, useColor bool) {
+	keys := make([]string, 0, len(fields))
+
+	for k := range fields {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+
+		val := fields[k]
+		formattedVal := ""
+
+		if s, ok := val.(string); ok {
+			formattedVal = fmt.Sprintf("%q", s)
+		} else {
+			formattedVal = fmt.Sprint(val)
+		}
+
+		if c, ok := f.highlightColors[k]; ok && useColor {
+			c.EnableColor()
+
+			b.WriteString(c.Sprint(fmt.Sprintf("%s=%s", k, formattedVal)))
+		} else {
+			b.WriteString(k)
+			b.WriteString("=")
+			b.WriteString(formattedVal)
+		}
+	}
+}
+
+// toFatihAttribute converts our public ColorAttribute to an internal fatih/color.Attribute.
+func toFatihAttribute(attr ColorAttribute) color.Attribute {
+	switch attr {
+	case FgBlack:
+		return color.FgBlack
+	case FgRed:
+		return color.FgRed
+	case FgGreen:
+		return color.FgGreen
+	case FgYellow:
+		return color.FgYellow
+	case FgBlue:
+		return color.FgBlue
+	case FgMagenta:
+		return color.FgMagenta
+	case FgCyan:
+		return color.FgCyan
+	case FgWhite:
+		return color.FgWhite
+	case AttrBold:
+		return color.Bold
+	case AttrUnderline:
+		return color.Underline
+	default:
+		panic(fmt.Sprintf("harelog: invalid ColorAttribute provided: %d", attr))
+	}
 }
