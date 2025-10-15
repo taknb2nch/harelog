@@ -252,6 +252,8 @@ type Logger struct {
 	hooksByLevel   map[LogLevel][]Hook
 	hookChan       chan *LogEntry
 	hookWg         sync.WaitGroup
+
+	outMutex sync.Mutex
 }
 
 // New creates a new Logger with default settings.
@@ -777,6 +779,9 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 
 // print writes the log entry to the logger's output.
 func (l *Logger) print(e *LogEntry) {
+	l.outMutex.Lock()
+	defer l.outMutex.Unlock()
+
 	out, err := l.formatter.Format(e)
 	if err != nil {
 		log.Printf("failed to format log entry: %v", err)

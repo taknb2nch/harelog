@@ -10,6 +10,8 @@ import (
 
 // TestJSONFormatter_Format directly tests the output of the jsonFormatter.
 func TestJSONFormatter_Format(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	testTime := time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC)
 
@@ -158,6 +160,10 @@ func TestTextFormatter_Format(t *testing.T) {
 		t.Run("Default behavior in non-TTY test environment is no color", func(t *testing.T) {
 			// The `go test` runner is not an interactive terminal (TTY),
 			// so the smart default should correctly disable colors.
+
+			// IMPORTANT: Intended for non-TTY environments
+			t.Setenv("HARELOG_NO_COLOR", "1")
+
 			f := NewTextFormatter() // No options provided
 			b, _ := f.Format(entry)
 			got := string(b)

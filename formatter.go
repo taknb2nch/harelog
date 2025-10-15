@@ -134,6 +134,14 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 // should UseColor determines if color should be used for the output.
 func (f *textFormatter) shouldUseColor() bool {
+	if os.Getenv("HARELOG_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+
+	if os.Getenv("HARELOG_FORCE_COLOR") != "" {
+		return true
+	}
+
 	if f.isEnableColorSet {
 		return f.enableColor
 	}
