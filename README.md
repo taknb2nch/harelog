@@ -29,8 +29,8 @@ harelog.Infof("Server started on port %d", 8080)
 
 // Structured logging with key-value pairs
 harelog.Infow("User logged in",
-    "userID", "user-123",
-    "ipAddress", "127.0.0.1",
+	"userID", "user-123",
+	"ipAddress", "127.0.0.1",
 )
 ```
 
@@ -42,12 +42,12 @@ You can create a contextual logger (or "child logger") that carries a predefined
 var logger = harelog.New() // Your base logger
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Create a new child logger with context for this specific request.
-    // The base logger is not modified.
-    reqLogger := logger.With("requestID", "abc-123", "remoteAddr", r.RemoteAddr)
+	// Create a new child logger with context for this specific request.
+	// The base logger is not modified.
+	reqLogger := logger.With("requestID", "abc-123", "remoteAddr", r.RemoteAddr)
 
-    reqLogger.Infof("request received")
-    reqLogger.Infow("user authenticated", "userID", "user-456")
+	reqLogger.Infof("request received")
+	reqLogger.Infow("user authenticated", "userID", "user-456")
 }
 ```
 
@@ -66,8 +66,8 @@ For integration with tracing systems, you can use the `...Ctx` variants of the l
 
 ```go
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // The request context `r.Context()` typically contains the trace header.
-    logger.InfofCtx(r.Context(), "handling request")
+	// The request context `r.Context()` typically contains the trace header.
+	logger.InfofCtx(r.Context(), "handling request")
 }
 ```
 
@@ -82,13 +82,13 @@ The most common way to configure a logger is at initialization using functional 
 ```go
 // Example of a fully configured logger
 logger := harelog.New(
-    harelog.WithOutput(os.Stdout),
-    harelog.WithLogLevel(harelog.LogLevelDebug),
-    harelog.WithFormatter(harelog.NewTextFormatter()),
-    harelog.WithAutoSource(harelog.SourceLocationModeAlways),
-    harelog.WithPrefix("[app] "),
-    harelog.WithLabels(map[string]string{"service": "api"}),
-    harelog.WithFields("version", "v1.5.0"),
+	harelog.WithOutput(os.Stdout),
+	harelog.WithLogLevel(harelog.LogLevelDebug),
+	harelog.WithFormatter(harelog.NewTextFormatter()),
+	harelog.WithAutoSource(harelog.SourceLocationModeAlways),
+	harelog.WithPrefix("[app] "),
+	harelog.WithLabels(map[string]string{"service": "api"}),
+	harelog.WithFields("version", "v1.5.0"),
 )
 ```
 
@@ -99,7 +99,7 @@ For easier debugging, `harelog` can automatically log the file and line number o
 ```go
 // In production, you might only want source location for errors.
 prodLogger := harelog.New(
-    harelog.WithAutoSource(harelog.SourceLocationModeErrorOrAbove),
+	harelog.WithAutoSource(harelog.SourceLocationModeErrorOrAbove),
 )
 
 prodLogger.Infof("This will NOT have source info.")
@@ -117,7 +117,7 @@ The `TextFormatter` provides a simple, single-line text output. By default, it a
 ```go
 // Use the WithFormatter option to switch to the text logger.
 logger := harelog.New(
-    harelog.WithFormatter(harelog.NewTextFormatter()),
+	harelog.WithFormatter(harelog.NewTextFormatter()),
 )
 
 // You can also explicitly control the log level coloring.
@@ -131,21 +131,21 @@ For the ultimate developer experience, the `ConsoleFormatter` extends the `TextF
 ```go
 // Use the ConsoleFormatter to highlight important keys.
 formatter := harelog.NewConsoleFormatter(
-    // Enable coloring for log levels (e.g., [INFO] in green).
-    harelog.WithConsoleLevelColor(true),
-    
-    // Define your highlight rules.
-    harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
-    harelog.WithKeyHighlight("requestID", harelog.FgMagenta),
-    harelog.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
+	// Enable coloring for log levels (e.g., [INFO] in green).
+	harelog.WithConsoleLevelColor(true),
+	
+	// Define your highlight rules.
+	harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
+	harelog.WithKeyHighlight("requestID", harelog.FgMagenta),
+	harelog.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
 )
 
 logger := harelog.New(harelog.WithFormatter(formatter))
 
 logger.Errorw("Failed to connect to database",
-    "userID", "user-789",
-    "requestID", "req-ghi-333",
-    "error", "connection refused",
+	"userID", "user-789",
+	"requestID", "req-ghi-333",
+	"error", "connection refused",
 )
 ```
 
@@ -157,6 +157,25 @@ You can control the default logger's verbosity by setting the `HARELOG_LEVEL` en
 HARELOG_LEVEL=debug go run main.go
 ```
 
+### Color Output via Environment Variables
+
+The color output of `TextFormatter` and `ConsoleFormatter` can be controlled globally. This is useful for forcing color on or off in CI/CD environments or when piping output.
+
+- `NO_COLOR` or `HARELOG_NO_COLOR`
+  - If either of these environment variables is set to any non-empty value (e.g., `true`, `1`), color output will be disabled. This follows a [quasi-standard](https://no-color.org/) supported by many command-line tools. `HARELOG_NO_COLOR` takes precedence over `NO_COLOR`.
+
+- `HARELOG_FORCE_COLOR`
+  - If this is set to any non-empty value, color output will be forcibly enabled, even in non-TTY environments (like files or pipes).
+
+#### Precedence
+
+The variables are evaluated in the following order of priority:
+
+1.  **`HARELOG_FORCE_COLOR`**: If set, color is **ON**.
+2.  **`HARELOG_NO_COLOR`**: If set, color is **OFF**.
+3.  **`NO_COLOR`**: If set, color is **OFF**.
+4.  **Default Behavior**: Automatic detection based on whether the output is a TTY.
+
 ### Configuring for Google Cloud Trace
 
 To enable automatic trace extraction from a `context.Context`, you must provide a Project ID and the context key your application uses.
@@ -165,8 +184,8 @@ To enable automatic trace extraction from a `context.Context`, you must provide 
 const frameworkTraceKey = "x-cloud-trace-context" 
 
 logger := harelog.New(
-    harelog.WithProjectID("my-gcp-project-id"),
-    harelog.WithTraceContextKey(frameworkTraceKey),
+	harelog.WithProjectID("my-gcp-project-id"),
+	harelog.WithTraceContextKey(frameworkTraceKey),
 )
 ```
 
