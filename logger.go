@@ -776,7 +776,7 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 			parts := strings.Split(traceHeader, "/")
 
 			if len(parts) > 0 && e.Trace == "" {
-				e.Trace = fmt.Sprintf("projects/%s/traces/%s", l.projectID, parts[0])
+				e.Trace = "projects/" + l.projectID + "/traces/" + parts[0]
 			}
 
 			if len(parts) > 1 && e.SpanID == "" {
@@ -817,7 +817,9 @@ func (l *Logger) print(e *LogEntry) {
 		return
 	}
 
-	fmt.Fprintln(l.out, string(out))
+	out = append(out, '\n')
+
+	l.out.Write(out)
 }
 
 func (l *Logger) findCaller() *SourceLocation {
