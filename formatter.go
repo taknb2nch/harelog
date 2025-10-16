@@ -2,7 +2,6 @@ package harelog
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	json "github.com/goccy/go-json"
 	isatty "github.com/mattn/go-isatty"
 )
 
