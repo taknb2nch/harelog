@@ -84,6 +84,15 @@ var levelMap = map[LogLevel]logLevelValue{
 	LogLevelAll:      logLevelValueAll,
 }
 
+var logEntryPool = sync.Pool{
+	New: func() any {
+		return &LogEntry{
+			Labels:  make(map[string]string),
+			Payload: make(map[string]interface{}),
+		}
+	},
+}
+
 func init() {
 	// Determine the package path of this library at startup.
 	harelogPackage = reflect.TypeOf(Logger{}).PkgPath()
@@ -148,14 +157,6 @@ type SourceLocation struct {
 	Function string `json:"function,omitempty"`
 }
 
-type jsonTime struct {
-	time.Time
-}
-
-func (t jsonTime) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + t.In(time.UTC).Format(time.RFC3339Nano) + `"`), nil
-}
-
 // --- Log Entry Structure ---
 
 // LogEntry is the internal data container for a single log entry.
@@ -168,13 +169,33 @@ type LogEntry struct {
 	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
 	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
 
-	Time   jsonTime          `json:"timestamp,omitempty"`
+	Time   time.Time         `json:"timestamp,omitempty"`
 	Labels map[string]string `json:"labels,omitempty"`
 
 	CorrelationID string `json:"correlationId,omitempty"`
 
 	// Any fields you want to output as `jsonPayload` are stored in this map.
 	Payload map[string]interface{} `json:"-"`
+}
+
+func (e *LogEntry) Clear() {
+	e.Message = ""
+	e.Severity = ""
+	e.Trace = ""
+	e.SpanID = ""
+	e.TraceSampled = nil
+	e.HTTPRequest = nil
+	e.SourceLocation = nil
+	e.Time = time.Time{}
+	e.CorrelationID = ""
+
+	if e.Labels != nil {
+		clear(e.Labels)
+	}
+
+	if e.Payload != nil {
+		clear(e.Payload)
+	}
 }
 
 // applyKVs applies key-value pairs to a log entry, handling special keys.
@@ -252,6 +273,8 @@ type Logger struct {
 	hooksByLevel   map[LogLevel][]Hook
 	hookChan       chan *LogEntry
 	hookWg         sync.WaitGroup
+
+	outMutex sync.Mutex
 }
 
 // New creates a new Logger with default settings.
@@ -353,7 +376,7 @@ func (l *Logger) fireHooks(entry *LogEntry) {
 				if r := recover(); r != nil {
 					e := &LogEntry{
 						Severity: LogLevelError,
-						Time:     jsonTime{time.Now()},
+						Time:     time.Now(),
 						Message:  "A hook panicked",
 						Payload:  map[string]any{"panic": r},
 					}
@@ -704,6 +727,12 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
+	defer func() {
+		e.Clear()
+
+		logEntryPool.Put(e)
+	}()
+
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
 		e.SourceLocation = l.findCaller()
@@ -712,8 +741,10 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 	if l.hookChan != nil {
 		// Use a non-blocking send to prevent the application from stalling
 		// if the hook channel buffer is full.
+		hookEntry := l.defensiveCopy(e)
+
 		select {
-		case l.hookChan <- e:
+		case l.hookChan <- hookEntry:
 		default:
 			// The entry is dropped if the channel is full.
 			// This is a trade-off to prioritize application performance over hook reliability under extreme load.
@@ -728,17 +759,16 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 // precedence: method args > logger context > context.Context.
 func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) *LogEntry {
 	// 1. Create the base entry.
-	e := &LogEntry{
-		Severity:      level,
-		Message:       l.prefix + msg,
-		Trace:         l.trace,
-		SpanID:        l.spanId,
-		TraceSampled:  l.traceSampled,
-		CorrelationID: l.correlationID,
-		Labels:        l.labels,
-		Time:          jsonTime{time.Now()},
-		Payload:       make(map[string]interface{}, len(l.payload)),
-	}
+	e := logEntryPool.Get().(*LogEntry)
+
+	e.Severity = level
+	e.Message = l.prefix + msg
+	e.Trace = l.trace
+	e.SpanID = l.spanId
+	e.TraceSampled = l.traceSampled
+	e.CorrelationID = l.correlationID
+	e.Labels = l.labels
+	e.Time = time.Now()
 
 	// 2. Apply values from context.Context (lowest precedence).
 	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {
@@ -746,7 +776,7 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 			parts := strings.Split(traceHeader, "/")
 
 			if len(parts) > 0 && e.Trace == "" {
-				e.Trace = fmt.Sprintf("projects/%s/traces/%s", l.projectID, parts[0])
+				e.Trace = "projects/" + l.projectID + "/traces/" + parts[0]
 			}
 
 			if len(parts) > 1 && e.SpanID == "" {
@@ -777,6 +807,9 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 
 // print writes the log entry to the logger's output.
 func (l *Logger) print(e *LogEntry) {
+	l.outMutex.Lock()
+	defer l.outMutex.Unlock()
+
 	out, err := l.formatter.Format(e)
 	if err != nil {
 		log.Printf("failed to format log entry: %v", err)
@@ -784,7 +817,9 @@ func (l *Logger) print(e *LogEntry) {
 		return
 	}
 
-	fmt.Fprintln(l.out, string(out))
+	out = append(out, '\n')
+
+	l.out.Write(out)
 }
 
 func (l *Logger) findCaller() *SourceLocation {

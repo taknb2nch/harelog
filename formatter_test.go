@@ -10,13 +10,15 @@ import (
 
 // TestJSONFormatter_Format directly tests the output of the jsonFormatter.
 func TestJSONFormatter_Format(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	testTime := time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC)
 
 	entry := &LogEntry{
 		Message:  "json format test",
 		Severity: LogLevelInfo,
-		Time:     jsonTime{testTime},
+		Time:     testTime,
 		Payload: map[string]interface{}{
 			"user": "gopher",
 		},
@@ -62,7 +64,7 @@ func TestTextFormatter_Format(t *testing.T) {
 				entry: &LogEntry{
 					Message:  "server started",
 					Severity: LogLevelInfo,
-					Time:     jsonTime{testTime},
+					Time:     testTime,
 				},
 				expected: `2025-09-30T14:00:00Z [INFO] server started`,
 			},
@@ -71,7 +73,7 @@ func TestTextFormatter_Format(t *testing.T) {
 				entry: &LogEntry{
 					Message:  "request failed",
 					Severity: LogLevelError,
-					Time:     jsonTime{testTime},
+					Time:     testTime,
 					Payload: map[string]interface{}{
 						"status": 500,
 						"path":   "/api/v1/users",
@@ -84,7 +86,7 @@ func TestTextFormatter_Format(t *testing.T) {
 				entry: &LogEntry{
 					Message:        "complex event",
 					Severity:       LogLevelWarn,
-					Time:           jsonTime{testTime},
+					Time:           testTime,
 					Trace:          "trace-id-123",
 					SpanID:         "span-id-456",
 					CorrelationID:  "corr-id-789",
@@ -124,7 +126,7 @@ func TestTextFormatter_Format(t *testing.T) {
 		entry := &LogEntry{
 			Message:  "error message",
 			Severity: LogLevelError,
-			Time:     jsonTime{testTime},
+			Time:     testTime,
 		}
 
 		t.Run("WithColor(true) enables color", func(t *testing.T) {
@@ -158,6 +160,10 @@ func TestTextFormatter_Format(t *testing.T) {
 		t.Run("Default behavior in non-TTY test environment is no color", func(t *testing.T) {
 			// The `go test` runner is not an interactive terminal (TTY),
 			// so the smart default should correctly disable colors.
+
+			// IMPORTANT: Intended for non-TTY environments
+			t.Setenv("HARELOG_NO_COLOR", "1")
+
 			f := NewTextFormatter() // No options provided
 			b, _ := f.Format(entry)
 			got := string(b)
@@ -177,7 +183,7 @@ func TestConsoleFormatter(t *testing.T) {
 	defer func() { color.NoColor = originalNoColor }()
 
 	entry := &LogEntry{
-		Time:     jsonTime{time.Date(2025, 10, 14, 13, 30, 0, 0, time.UTC)},
+		Time:     time.Date(2025, 10, 14, 13, 30, 0, 0, time.UTC),
 		Severity: LogLevelInfo,
 		Message:  "user action",
 		Payload: map[string]interface{}{
