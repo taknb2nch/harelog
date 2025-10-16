@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -23,6 +24,41 @@ var levelColorMap = map[LogLevel]*color.Color{
 	LogLevelDebug:    color.New(color.FgCyan),
 }
 
+var jsonEntryPool = sync.Pool{
+	New: func() any {
+		return &jsonEntry{}
+	},
+}
+
+type jsonEntry struct {
+	Message        string          `json:"message"`
+	Severity       LogLevel        `json:"severity,omitempty"`
+	Trace          string          `json:"logging.googleapis.com/trace,omitempty"`
+	SpanID         string          `json:"logging.googleapis.com/spanId,omitempty"`
+	TraceSampled   *bool           `json:"logging.googleapis.com/trace_sampled,omitempty"`
+	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
+	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
+
+	Time   jsonTime          `json:"timestamp,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+
+	CorrelationID string `json:"correlationId,omitempty"`
+}
+
+// Clear resets the jsonEntry fields to their zero values for safe reuse in the pool.
+func (e *jsonEntry) Clear() {
+	e.Message = ""
+	e.Severity = ""
+	e.Trace = ""
+	e.SpanID = ""
+	e.TraceSampled = nil
+	e.HTTPRequest = nil
+	e.SourceLocation = nil
+	e.Time = jsonTime{}
+	e.Labels = nil // Set to nil, as it's a reference
+	e.CorrelationID = ""
+}
+
 // Formatter is an interface for converting a logEntry into a byte slice.
 type Formatter interface {
 	Format(entry *LogEntry) ([]byte, error)
@@ -38,46 +74,47 @@ func NewJSONFormatter() *jsonFormatter {
 
 // Format converts a logEntry to JSON format.
 func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
-	m := make(map[string]interface{})
+	head := jsonEntryPool.Get().(*jsonEntry)
 
-	for k, v := range e.Payload {
-		m[k] = v
+	defer func() {
+		head.Clear()
+		jsonEntryPool.Put(head)
+	}()
+
+	head.Message = e.Message
+	head.Severity = e.Severity
+	head.Trace = e.Trace
+	head.SpanID = e.SpanID
+	head.TraceSampled = e.TraceSampled
+	head.HTTPRequest = e.HTTPRequest
+	head.SourceLocation = e.SourceLocation
+	head.Time = e.Time
+	head.Labels = e.Labels
+	head.CorrelationID = e.CorrelationID
+
+	headerBytes, err := json.Marshal(head)
+	if err != nil {
+		return nil, err
 	}
 
-	m["message"] = e.Message
-	m["severity"] = e.Severity
-
-	if e.Trace != "" {
-		m["logging.googleapis.com/trace"] = e.Trace
+	if len(e.Payload) == 0 {
+		return headerBytes, nil
 	}
 
-	if e.SpanID != "" {
-		m["logging.googleapis.com/spanId"] = e.SpanID
+	payloadBytes, err := json.Marshal(e.Payload)
+	if err != nil {
+		return nil, err
 	}
 
-	if e.TraceSampled != nil {
-		m["logging.googleapis.com/trace_sampled"] = e.TraceSampled
+	if len(headerBytes) <= 2 {
+		return payloadBytes, nil
 	}
 
-	if e.HTTPRequest != nil {
-		m["httpRequest"] = e.HTTPRequest
-	}
+	out := headerBytes[:len(headerBytes)-1]
+	out = append(out, ',')
+	out = append(out, payloadBytes[1:]...)
 
-	if e.SourceLocation != nil {
-		m["logging.googleapis.com/sourceLocation"] = e.SourceLocation
-	}
-
-	m["timestamp"] = e.Time
-
-	if len(e.Labels) > 0 {
-		m["labels"] = e.Labels
-	}
-
-	if e.CorrelationID != "" {
-		m["correlationId"] = e.CorrelationID
-	}
-
-	return json.Marshal(m)
+	return out, nil
 }
 
 // textFormatter formats log entries as human-readable text.
