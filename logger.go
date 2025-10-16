@@ -157,14 +157,6 @@ type SourceLocation struct {
 	Function string `json:"function,omitempty"`
 }
 
-type jsonTime struct {
-	time.Time
-}
-
-func (t jsonTime) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + t.In(time.UTC).Format(time.RFC3339Nano) + `"`), nil
-}
-
 // --- Log Entry Structure ---
 
 // LogEntry is the internal data container for a single log entry.
@@ -177,7 +169,7 @@ type LogEntry struct {
 	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
 	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
 
-	Time   jsonTime          `json:"timestamp,omitempty"`
+	Time   time.Time         `json:"timestamp,omitempty"`
 	Labels map[string]string `json:"labels,omitempty"`
 
 	CorrelationID string `json:"correlationId,omitempty"`
@@ -194,7 +186,7 @@ func (e *LogEntry) Clear() {
 	e.TraceSampled = nil
 	e.HTTPRequest = nil
 	e.SourceLocation = nil
-	e.Time = jsonTime{}
+	e.Time = time.Time{}
 	e.CorrelationID = ""
 
 	if e.Labels != nil {
@@ -384,7 +376,7 @@ func (l *Logger) fireHooks(entry *LogEntry) {
 				if r := recover(); r != nil {
 					e := &LogEntry{
 						Severity: LogLevelError,
-						Time:     jsonTime{time.Now()},
+						Time:     time.Now(),
 						Message:  "A hook panicked",
 						Payload:  map[string]any{"panic": r},
 					}
@@ -776,7 +768,7 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 	e.TraceSampled = l.traceSampled
 	e.CorrelationID = l.correlationID
 	e.Labels = l.labels
-	e.Time = jsonTime{time.Now()}
+	e.Time = time.Now()
 
 	// 2. Apply values from context.Context (lowest precedence).
 	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {

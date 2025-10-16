@@ -39,7 +39,7 @@ type jsonEntry struct {
 	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
 	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
 
-	Time   jsonTime          `json:"timestamp,omitempty"`
+	Time   time.Time         `json:"timestamp,omitempty"`
 	Labels map[string]string `json:"labels,omitempty"`
 
 	CorrelationID string `json:"correlationId,omitempty"`
@@ -54,7 +54,7 @@ func (e *jsonEntry) Clear() {
 	e.TraceSampled = nil
 	e.HTTPRequest = nil
 	e.SourceLocation = nil
-	e.Time = jsonTime{}
+	e.Time = time.Time{}
 	e.Labels = nil // Set to nil, as it's a reference
 	e.CorrelationID = ""
 }
