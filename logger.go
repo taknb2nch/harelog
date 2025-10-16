@@ -84,6 +84,15 @@ var levelMap = map[LogLevel]logLevelValue{
 	LogLevelAll:      logLevelValueAll,
 }
 
+var logEntryPool = sync.Pool{
+	New: func() any {
+		return &LogEntry{
+			Labels:  make(map[string]string),
+			Payload: make(map[string]interface{}),
+		}
+	},
+}
+
 func init() {
 	// Determine the package path of this library at startup.
 	harelogPackage = reflect.TypeOf(Logger{}).PkgPath()
@@ -175,6 +184,26 @@ type LogEntry struct {
 
 	// Any fields you want to output as `jsonPayload` are stored in this map.
 	Payload map[string]interface{} `json:"-"`
+}
+
+func (e *LogEntry) Clear() {
+	e.Message = ""
+	e.Severity = ""
+	e.Trace = ""
+	e.SpanID = ""
+	e.TraceSampled = nil
+	e.HTTPRequest = nil
+	e.SourceLocation = nil
+	e.Time = jsonTime{}
+	e.CorrelationID = ""
+
+	if e.Labels != nil {
+		clear(e.Labels)
+	}
+
+	if e.Payload != nil {
+		clear(e.Payload)
+	}
 }
 
 // applyKVs applies key-value pairs to a log entry, handling special keys.
@@ -706,6 +735,12 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
+	defer func() {
+		e.Clear()
+
+		logEntryPool.Put(e)
+	}()
+
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
 		e.SourceLocation = l.findCaller()
@@ -714,8 +749,10 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 	if l.hookChan != nil {
 		// Use a non-blocking send to prevent the application from stalling
 		// if the hook channel buffer is full.
+		hookEntry := l.defensiveCopy(e)
+
 		select {
-		case l.hookChan <- e:
+		case l.hookChan <- hookEntry:
 		default:
 			// The entry is dropped if the channel is full.
 			// This is a trade-off to prioritize application performance over hook reliability under extreme load.
@@ -730,17 +767,16 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 // precedence: method args > logger context > context.Context.
 func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) *LogEntry {
 	// 1. Create the base entry.
-	e := &LogEntry{
-		Severity:      level,
-		Message:       l.prefix + msg,
-		Trace:         l.trace,
-		SpanID:        l.spanId,
-		TraceSampled:  l.traceSampled,
-		CorrelationID: l.correlationID,
-		Labels:        l.labels,
-		Time:          jsonTime{time.Now()},
-		Payload:       make(map[string]interface{}, len(l.payload)),
-	}
+	e := logEntryPool.Get().(*LogEntry)
+
+	e.Severity = level
+	e.Message = l.prefix + msg
+	e.Trace = l.trace
+	e.SpanID = l.spanId
+	e.TraceSampled = l.traceSampled
+	e.CorrelationID = l.correlationID
+	e.Labels = l.labels
+	e.Time = jsonTime{time.Now()}
 
 	// 2. Apply values from context.Context (lowest precedence).
 	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {
