@@ -727,11 +727,7 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
-	defer func() {
-		e.Clear()
-
-		logEntryPool.Put(e)
-	}()
+	defer logEntryPool.Put(e)
 
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
@@ -816,6 +812,8 @@ func (l *Logger) print(e *LogEntry) {
 
 		return
 	}
+
+	e.Clear()
 
 	out = append(out, '\n')
 
