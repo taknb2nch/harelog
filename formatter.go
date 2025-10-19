@@ -55,8 +55,10 @@ func (e *jsonEntry) Clear() {
 	e.HTTPRequest = nil
 	e.SourceLocation = nil
 	e.Time = time.Time{}
-	e.Labels = nil // Set to nil, as it's a reference
+	// e.Labels = nil // Set to nil, as it's a reference
 	e.CorrelationID = ""
+
+	clearOrResetMap(&e.Labels, 16)
 }
 
 // Formatter is an interface for converting a logEntry into a byte slice.
@@ -190,8 +192,9 @@ func (f *textFormatter) shouldUseColor() bool {
 // It returns the determined 'useColor' boolean for use by field formatters.
 func (f *textFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
 	// Timestamp
-	b.WriteString(e.Time.Format(time.RFC3339))
-	b.WriteString(" ")
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
 
 	levelString := fmt.Sprintf("[%s]", e.Severity)
 

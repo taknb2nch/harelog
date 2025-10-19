@@ -190,11 +190,11 @@ func (e *LogEntry) Clear() {
 	e.CorrelationID = ""
 
 	if e.Labels != nil {
-		clear(e.Labels)
+		clearOrResetMap(&e.Labels, 16)
 	}
 
 	if e.Payload != nil {
-		clear(e.Payload)
+		clearOrResetMap(&e.Payload, 16)
 	}
 }
 
@@ -727,8 +727,6 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
-	defer logEntryPool.Put(e)
-
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
 		e.SourceLocation = l.findCaller()
@@ -748,6 +746,8 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 	}
 
 	l.print(e)
+
+	logEntryPool.Put(e)
 }
 
 // createEntry is the single, central helper for creating log entries.
