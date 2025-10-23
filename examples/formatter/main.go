@@ -12,7 +12,7 @@ func main() {
 	// The API is designed to be intuitive and type-safe, using functional options.
 	formatter := harelog.NewConsoleFormatter(
 		// Enable log level coloring (e.g., INFO in green, ERROR in red).
-		harelog.WithConsoleLevelColor(true),
+		harelog.WithLogLevelColor(true),
 
 		// Define highlight rules for specific keys.
 		// You can chain as many WithKeyHighlight options as you need.

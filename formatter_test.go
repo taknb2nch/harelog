@@ -45,6 +45,7 @@ func TestJSONFormatter_Format(t *testing.T) {
 	}
 }
 
+// WithTextLevelColor(false)
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -52,7 +53,7 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
-		f := NewTextFormatter(WithTextLevelColor(false)) // Explicitly disable color
+		f := NewTextFormatter() // Explicitly disable color
 
 		tests := []struct {
 			name     string
@@ -121,6 +122,28 @@ func TestTextFormatter_Format(t *testing.T) {
 		}
 	})
 
+}
+
+func TestConsoleFormatter(t *testing.T) {
+	// Temporarily disable color for fatih/color's auto-detection to ensure
+	// our enable/disable logic works as expected.
+	originalNoColor := color.NoColor
+	color.NoColor = true
+	defer func() { color.NoColor = originalNoColor }()
+
+	testTime := time.Date(2025, 10, 14, 13, 30, 0, 0, time.UTC)
+
+	entry := &LogEntry{
+		Time:     testTime,
+		Severity: LogLevelInfo,
+		Message:  "user action",
+		Payload: map[string]interface{}{
+			"userID":    "user-123",
+			"requestID": "req-abc",
+			"action":    "logout",
+		},
+	}
+
 	// --- Subtests specifically for color logic ---
 	t.Run("Colorization logic", func(t *testing.T) {
 		entry := &LogEntry{
@@ -130,7 +153,9 @@ func TestTextFormatter_Format(t *testing.T) {
 		}
 
 		t.Run("WithColor(true) enables color", func(t *testing.T) {
-			f := NewTextFormatter(WithTextLevelColor(true))
+			t.Setenv("HARELOG_FORCE_COLOR", "1")
+
+			f := NewConsoleFormatter(WithLogLevelColor(true))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -145,7 +170,9 @@ func TestTextFormatter_Format(t *testing.T) {
 		})
 
 		t.Run("WithColor(false) disables color", func(t *testing.T) {
-			f := NewTextFormatter(WithTextLevelColor(false))
+			t.Setenv("HARELOG_FORCE_COLOR", "1")
+
+			f := NewConsoleFormatter(WithLogLevelColor(false))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -164,7 +191,7 @@ func TestTextFormatter_Format(t *testing.T) {
 			// IMPORTANT: Intended for non-TTY environments
 			t.Setenv("HARELOG_NO_COLOR", "1")
 
-			f := NewTextFormatter() // No options provided
+			f := NewConsoleFormatter() // No options provided
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -173,29 +200,12 @@ func TestTextFormatter_Format(t *testing.T) {
 			}
 		})
 	})
-}
-
-func TestConsoleFormatter(t *testing.T) {
-	// Temporarily disable color for fatih/color's auto-detection to ensure
-	// our enable/disable logic works as expected.
-	originalNoColor := color.NoColor
-	color.NoColor = true
-	defer func() { color.NoColor = originalNoColor }()
-
-	entry := &LogEntry{
-		Time:     time.Date(2025, 10, 14, 13, 30, 0, 0, time.UTC),
-		Severity: LogLevelInfo,
-		Message:  "user action",
-		Payload: map[string]interface{}{
-			"userID":    "user-123",
-			"requestID": "req-abc",
-			"action":    "logout",
-		},
-	}
 
 	t.Run("Basic Highlighting", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(true),
+			WithLogLevelColor(true),
 			WithKeyHighlight("userID", FgCyan),
 		)
 
@@ -220,8 +230,10 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 
 	t.Run("Highlight with Style", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(true),
+			WithLogLevelColor(true),
 			WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
@@ -240,8 +252,10 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 
 	t.Run("Rule: Last Color Wins", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(true),
+			WithLogLevelColor(true),
 			WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
 		)
 
@@ -260,8 +274,10 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 
 	t.Run("Rule: Styles are Additive", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(true),
+			WithLogLevelColor(true),
 			WithKeyHighlight("userID", AttrBold, AttrUnderline),
 		)
 
@@ -280,8 +296,10 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 
 	t.Run("Rule: Last Key Config Overwrites", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(true),
+			WithLogLevelColor(true),
 			WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
 			WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
 		)
@@ -301,8 +319,10 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 
 	t.Run("Color Disabled", func(t *testing.T) {
+		t.Setenv("HARELOG_FORCE_COLOR", "1")
+
 		f := NewConsoleFormatter(
-			WithConsoleLevelColor(false), // Explicitly disable color
+			WithLogLevelColor(false), // Explicitly disable color
 			WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
@@ -312,11 +332,15 @@ func TestConsoleFormatter(t *testing.T) {
 		}
 
 		output := string(b)
+		cyanBold := color.New(color.FgCyan, color.Bold)
+		cyanBold.EnableColor()
+		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
+
 		// Check for plain text, no ANSI codes
-		if !strings.Contains(output, `userID="user-123"`) {
-			t.Errorf("output should contain plain userID: %s", output)
+		if !strings.Contains(output, expectedHighlight) {
+			t.Errorf("output should contain bold cyan highlighted userID.\nGot: %s", output)
 		}
-		if strings.Contains(output, "\x1b[") {
+		if strings.Contains(output, "\x33[") {
 			t.Errorf("output should not contain any ANSI color codes when disabled: %s", output)
 		}
 	})

@@ -120,43 +120,30 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 }
 
 // textFormatter formats log entries as human-readable text.
-type textFormatter struct {
-	enableColor      bool
-	isEnableColorSet bool
-}
-
-// TextFormatterOption configures a textFormatter.
-type TextFormatterOption func(*textFormatter)
+type textFormatter struct{}
 
 // NewTextFormatter creates a new TextFormatter.
-func NewTextFormatter(opts ...TextFormatterOption) *textFormatter {
-	formatter := &textFormatter{
-		enableColor:      false,
-		isEnableColorSet: false,
-	}
-
-	for _, opt := range opts {
-		opt(formatter)
-	}
-
-	return formatter
-}
-
-// WithTextLevelColor is an option to enable or disable color output for the TextFormatter.
-func WithTextLevelColor(enabled bool) TextFormatterOption {
-	return func(f *textFormatter) {
-		f.enableColor = enabled
-		f.isEnableColorSet = true
-	}
+func NewTextFormatter() *textFormatter {
+	return &textFormatter{}
 }
 
 // Format converts a logEntry to a single-line text format.
 func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
-	useColor := f.shouldUseColor()
+	// f.writeHeader(&b, e, false)
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
 
-	f.writeHeader(&b, e, useColor)
+	b.WriteByte('[')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(']')
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString(strings.TrimRight(e.Message, "\n"))
 
 	fields := f.aggregateFields(e)
 
@@ -171,34 +158,18 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// should UseColor determines if color should be used for the output.
-func (f *textFormatter) shouldUseColor() bool {
-	if os.Getenv("HARELOG_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-
-	if os.Getenv("HARELOG_FORCE_COLOR") != "" {
-		return true
-	}
-
-	if f.isEnableColorSet {
-		return f.enableColor
-	}
-
-	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
-}
-
 // writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
 // It returns the determined 'useColor' boolean for use by field formatters.
-func (f *textFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
+func (f *consoleFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
 	// Timestamp
 	b.Grow(32)
 	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
 	b.WriteByte(' ')
 
+	enableLogLevelColor := f.isEnableColorSet && f.enableColor
 	levelString := fmt.Sprintf("[%s]", e.Severity)
 
-	if c, ok := levelColorMap[e.Severity]; ok {
+	if c, ok := levelColorMap[e.Severity]; ok && enableLogLevelColor {
 		// Explicitly enable or disable color on the object for this call.
 		if useColor {
 			c.EnableColor()
@@ -325,7 +296,9 @@ const (
 // It supports highlighting specific key-value pairs to improve readability.
 type consoleFormatter struct {
 	*textFormatter
-	highlightColors map[string]*color.Color
+	enableColor      bool
+	isEnableColorSet bool
+	highlightColors  map[string]*color.Color
 }
 
 // ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
@@ -334,8 +307,10 @@ type ConsoleFormatterOption func(*consoleFormatter)
 // NewConsoleFormatter creates a new ConsoleFormatter.
 func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	formatter := &consoleFormatter{
-		textFormatter:   &textFormatter{},
-		highlightColors: make(map[string]*color.Color),
+		textFormatter:    &textFormatter{},
+		enableColor:      false,
+		isEnableColorSet: false,
+		highlightColors:  make(map[string]*color.Color),
 	}
 
 	for _, opt := range opts {
@@ -345,8 +320,8 @@ func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	return formatter
 }
 
-// WithConsoleLevelColor is an option to enable or disable log level color output for the ConsoleFormatter.
-func WithConsoleLevelColor(enabled bool) ConsoleFormatterOption {
+// WithLogLevelColor is an option to enable or disable log level color output for the ConsoleFormatter.
+func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
 	return func(f *consoleFormatter) {
 		f.enableColor = enabled
 		f.isEnableColorSet = true
@@ -395,6 +370,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	// Since ConsoleFormatter embeds textFormatter, it can call its methods directly.
 	useColor := f.shouldUseColor()
+
 	f.writeHeader(&b, e, useColor)
 
 	// Aggregate fields
@@ -410,6 +386,19 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	return b.Bytes(), nil
+}
+
+// should UseColor determines if color should be used for the output.
+func (f *consoleFormatter) shouldUseColor() bool {
+	if os.Getenv("HARELOG_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+
+	if os.Getenv("HARELOG_FORCE_COLOR") != "" {
+		return true
+	}
+
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
 }
 
 // writeHighlightedFields formats and appends key-value pairs with highlighting.
