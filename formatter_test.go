@@ -2,6 +2,7 @@ package harelog
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -354,4 +355,45 @@ func TestConsoleFormatter(t *testing.T) {
 		// This should panic because 99 is not a valid ColorAttribute
 		_ = NewConsoleFormatter(WithKeyHighlight("userID", ColorAttribute(99)))
 	})
+}
+
+func BenchmarkFormatOnly(b *testing.B) {
+	f := &jsonFormatter{}
+	e := &LogEntry{
+		Message:  "hello",
+		Severity: "INFO",
+		Time:     time.Now(),
+		Labels: map[string]string{
+			"service": "core",
+			"env":     "prod",
+		},
+		Payload: map[string]any{
+			"user":  "takanobu",
+			"count": 3,
+		},
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		f.Format(e)
+	}
+}
+
+func BenchmarkPrintPath(b *testing.B) {
+	f := &jsonFormatter{}
+	e := &LogEntry{
+		Message:  "world",
+		Severity: "DEBUG",
+		Time:     time.Now(),
+		Payload: map[string]any{
+			"active": true,
+		},
+	}
+	var mu sync.Mutex
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		mu.Lock()
+		f.Format(e)
+		mu.Unlock()
+	}
 }
