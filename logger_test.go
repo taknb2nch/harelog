@@ -441,7 +441,7 @@ func TestDefaultLogger(t *testing.T) {
 		if !strings.Contains(got, "[INFO] text output test") {
 			t.Errorf("output does not contain text message: %s", got)
 		}
-		if !strings.Contains(got, `{key="value"}`) {
+		if !strings.Contains(got, `{ key="value" }`) {
 			t.Errorf("output does not contain text payload: %s", got)
 		}
 		if strings.HasPrefix(got, "{") {
@@ -718,7 +718,7 @@ func TestFormatters(t *testing.T) {
 		if !strings.Contains(got, "[INFO] text test") {
 			t.Errorf("output does not contain text message: %s", got)
 		}
-		if !strings.Contains(got, `{key="value"}`) {
+		if !strings.Contains(got, `{ key="value" }`) {
 			t.Errorf("output does not contain text payload: %s", got)
 		}
 		if strings.HasPrefix(got, "{") {

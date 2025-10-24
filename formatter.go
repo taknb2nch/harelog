@@ -131,8 +131,9 @@ func NewTextFormatter() *textFormatter {
 // Format converts a logEntry to a single-line text format.
 func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
+	var scratch [64]byte
+	var buf []byte
 
-	// f.writeHeader(&b, e, false)
 	// Timestamp
 	b.Grow(32)
 	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
@@ -144,69 +145,214 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	b.WriteByte(' ')
 
 	// Message
-	b.WriteString(strings.TrimRight(e.Message, "\n"))
+	b.WriteString(e.Message)
 
-	fields := aggregateFields(e)
+	buf = b.Bytes()
 
-	if len(fields) > 0 {
-		b.WriteString(" {")
-
-		f.writeFields(&b, fields)
-
-		b.WriteString("}")
+	if len(buf) > 0 && buf[len(buf)-1] == '\n' {
+		b.Truncate(len(buf) - 1)
 	}
 
-	return b.Bytes(), nil
-}
+	isSource := false
+	isTrace := false
+	isSpanID := false
+	isCorrelationId := false
+	isHttpRequest := false
+	isLabel := false
+	isPayload := false
 
-// writeFields formats and appends the key-value pairs to the buffer.
-func (f *textFormatter) writeFields(b *bytes.Buffer, fields map[string]interface{}) {
-	keys := make([]string, 0, len(fields))
+	b.WriteByte(' ')
+	b.WriteByte('{')
+	b.WriteByte(' ')
 
-	for k := range fields {
+	// Add special fields if they exist and are not already in the payload
+	if e.SourceLocation != nil {
+		if _, ok := e.Payload["sourceLocation"]; !ok {
+			// Format source location for readability
+			b.WriteString("source")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.SourceLocation.File)
+			b.WriteByte(':')
+			b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isSource = true
+		}
+	}
+
+	if e.Trace != "" {
+		b.WriteString("trace")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.Trace)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isTrace = true
+	}
+
+	if e.SpanID != "" {
+		b.WriteString("spanId")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.SpanID)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isSpanID = true
+	}
+
+	if e.CorrelationID != "" {
+		b.WriteString("correlationId")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.CorrelationID)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isCorrelationId = true
+	}
+
+	if e.HTTPRequest != nil {
+		// Extract the most useful parts of the HTTP request
+		if e.HTTPRequest.RequestMethod != "" {
+			b.WriteString("http.method")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.HTTPRequest.RequestMethod)
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.Status != 0 {
+			b.WriteString("http.status")
+			b.WriteByte('=')
+			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+			b.WriteString(",")
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.RequestURL != "" {
+			b.WriteString("http.url")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.HTTPRequest.RequestURL)
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+	}
+
+	keys := make([]string, 0, len(e.Labels))
+
+	for k := range e.Labels {
 		keys = append(keys, k)
 	}
 
 	sort.Strings(keys)
 
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteString(", ")
+	for _, key := range keys {
+		b.WriteString("label")
+		b.WriteByte('.')
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(strconv.Quote(e.Labels[key]))
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isLabel = true
+	}
+
+	keys = make([]string, 0, len(e.Payload))
+
+	for k := range e.Payload {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if isTrace && key == "trace" {
+			continue
 		}
 
-		b.WriteString(k)
+		if isSpanID && key == "spanId" {
+			continue
+		}
+
+		if isCorrelationId && key == "correlationId" {
+			continue
+		}
+
+		if isHttpRequest && key == "httpRequest" {
+			continue
+		}
+
+		b.WriteString(key)
 		b.WriteString("=")
 
-		switch v := fields[k].(type) {
+		switch val := e.Payload[key].(type) {
 		case string:
-			// b.WriteString("\"" + v + "\"")
-			b.WriteString(strconv.Quote(v))
+			b.WriteString(strconv.Quote(val))
+		case bool:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendBool(scratch[:0], val))
 		case int:
 			scratch := [64]byte{}
 
-			b.Write(strconv.AppendInt(scratch[:0], int64(v), 10))
+			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
 		case int32:
 			scratch := [64]byte{}
 
-			b.Write(strconv.AppendInt(scratch[:0], int64(v), 10))
+			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
 		case int64:
 			scratch := [64]byte{}
 
-			b.Write(strconv.AppendInt(scratch[:0], v, 10))
+			b.Write(strconv.AppendInt(scratch[:0], val, 10))
 		case float32:
 			scratch := [64]byte{}
 
-			b.Write(strconv.AppendFloat(scratch[:0], float64(v), 'f', -1, 64))
+			b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
 		case float64:
 			scratch := [64]byte{}
 
-			b.Write(strconv.AppendFloat(scratch[:0], v, 'f', -1, 64))
+			b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
 		case fmt.Stringer:
-			b.WriteString(v.String())
+			b.WriteString(val.String())
 		default:
-			b.WriteString(fmt.Sprint(v))
+			b.WriteString(fmt.Sprint(val))
 		}
+
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isPayload = true
 	}
+
+	buf = b.Bytes()
+
+	if isSource || isTrace || isSpanID || isCorrelationId || isHttpRequest || isLabel || isPayload {
+		b.Truncate(len(buf) - 2)
+		b.WriteByte(' ')
+		b.WriteByte('}')
+	} else {
+		// space }
+		b.Truncate(len(buf) - 3)
+	}
+
+	return b.Bytes(), nil
 }
 
 // aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.

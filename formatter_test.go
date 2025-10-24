@@ -53,7 +53,7 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
-		f := NewTextFormatter() // Explicitly disable color
+		f := NewTextFormatter()
 
 		tests := []struct {
 			name     string
@@ -61,29 +61,42 @@ func TestTextFormatter_Format(t *testing.T) {
 			expected string
 		}{
 			{
-				name: "Simple message with no payload",
+				name: "Simple message with no payload (trims empty brackets)",
 				entry: &LogEntry{
 					Message:  "server started",
 					Severity: LogLevelInfo,
 					Time:     testTime,
 				},
+				// ★FIX: The new logic adds and removes {} if no fields exist
 				expected: `2025-09-30T14:00:00Z [INFO] server started`,
 			},
 			{
-				name: "Message with simple payload",
+				name: "Message with trailing newline (trims newline)",
+				entry: &LogEntry{
+					Message:  "message with newline\n",
+					Severity: LogLevelInfo,
+					Time:     testTime,
+				},
+				// ★FIX: The new logic correctly trims the \n from the message
+				expected: `2025-09-30T14:00:00Z [INFO] message with newline`,
+			},
+			{
+				name: "Message with simple payload (payload sorted)",
 				entry: &LogEntry{
 					Message:  "request failed",
 					Severity: LogLevelError,
 					Time:     testTime,
 					Payload: map[string]interface{}{
 						"status": 500,
-						"path":   "/api/v1/users",
+						"path":   "/api/v1/users", // "path" comes before "status" alphabetically
+						"active": true,
 					},
 				},
-				expected: `2025-09-30T14:00:00Z [ERROR] request failed {path="/api/v1/users", status=500}`,
+				// ★FIX: No space before {, payload keys are sorted, bool/int formats
+				expected: `2025-09-30T14:00:00Z [ERROR] request failed { active=true, path="/api/v1/users", status=500 }`,
 			},
 			{
-				name: "Message with all special fields",
+				name: "Message with all special fields (fixed order + map sort)",
 				entry: &LogEntry{
 					Message:        "complex event",
 					Severity:       LogLevelWarn,
@@ -91,7 +104,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Trace:          "trace-id-123",
 					SpanID:         "span-id-456",
 					CorrelationID:  "corr-id-789",
-					Labels:         map[string]string{"region": "jp-east"},
+					Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
 					SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
 					HTTPRequest: &HTTPRequest{
 						RequestMethod: "POST",
@@ -100,10 +113,27 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 					Payload: map[string]interface{}{
 						"userID": "user-abc",
+						"dept":   "eng", // dept, userID
 					},
 				},
-				// Note: keys are sorted alphabetically
-				expected: `2025-09-30T14:00:00Z [WARN] complex event {correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.region="jp-east", source="app/server.go:152", spanId="span-id-456", trace="trace-id-123", userID="user-abc"}`,
+				// ★FIX: This is the new deterministic order:
+				// {StructFields(fixed)} {Labels(sorted)} {Payload(sorted)}
+				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go:152", trace="trace-id-123", spanId="span-id-456", correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.cluster="A", label.region="jp-east", dept="eng", userID="user-abc" }`,
+			},
+			{
+				name: "Payload with duplicate struct fields (skips payload fields)",
+				entry: &LogEntry{
+					Message:  "duplicate fields test",
+					Severity: LogLevelInfo,
+					Time:     testTime,
+					Trace:    "trace-A", // This one should be written
+					Payload: map[string]interface{}{
+						"userID": "user-123",
+						"trace":  "trace-B", // This one should be skipped
+					},
+				},
+				// ★FIX: Ensures StructFields take precedence and payload duplicates are skipped
+				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace="trace-A", userID="user-123" }`,
 			},
 		}
 
@@ -121,7 +151,6 @@ func TestTextFormatter_Format(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestConsoleFormatter(t *testing.T) {
