@@ -2,7 +2,6 @@ package harelog
 
 import (
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -357,7 +356,58 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 }
 
-func BenchmarkFormatOnly(b *testing.B) {
+// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkTextFormatter_Simple(b *testing.B) {
+	// Setup: Define entry locally
+	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:  "server started",
+		Severity: LogLevelInfo,
+		Time:     benchmarkTime,
+	}
+	f := NewTextFormatter()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// The error is ignored in benchmarks as we test correctness in unit tests.
+		_, _ = f.Format(entry)
+	}
+}
+
+// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry
+// with all special fields (SourceLocation, HTTPRequest, Trace, etc.).
+func BenchmarkTextFormatter_Complex(b *testing.B) {
+	// Setup: Define entry locally
+	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "complex event",
+		Severity:       LogLevelWarn,
+		Time:           benchmarkTime,
+		Trace:          "trace-id-123",
+		SpanID:         "span-id-456",
+		CorrelationID:  "corr-id-789",
+		Labels:         map[string]string{"region": "jp-east"},
+		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+		HTTPRequest: &HTTPRequest{
+			RequestMethod: "POST",
+			Status:        401,
+			RequestURL:    "/api/v1/login",
+		},
+		Payload: map[string]interface{}{
+			"userID": "user-abc",
+		},
+	}
+	f := NewTextFormatter()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(entry)
+	}
+}
+
+func BenchmarkJsonFormatter_Simple(b *testing.B) {
 	f := &jsonFormatter{}
 	e := &LogEntry{
 		Message:  "hello",
@@ -372,13 +422,15 @@ func BenchmarkFormatOnly(b *testing.B) {
 			"count": 3,
 		},
 	}
+
 	b.ReportAllocs()
+
 	for i := 0; i < b.N; i++ {
 		f.Format(e)
 	}
 }
 
-func BenchmarkPrintPath(b *testing.B) {
+func BenchmarkJsonFormatter_Complex(b *testing.B) {
 	f := &jsonFormatter{}
 	e := &LogEntry{
 		Message:  "world",
@@ -388,12 +440,10 @@ func BenchmarkPrintPath(b *testing.B) {
 			"active": true,
 		},
 	}
-	var mu sync.Mutex
 
 	b.ReportAllocs()
+
 	for i := 0; i < b.N; i++ {
-		mu.Lock()
 		f.Format(e)
-		mu.Unlock()
 	}
 }

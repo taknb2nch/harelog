@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,7 +146,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	// Message
 	b.WriteString(strings.TrimRight(e.Message, "\n"))
 
-	fields := f.aggregateFields(e)
+	fields := aggregateFields(e)
 
 	if len(fields) > 0 {
 		b.WriteString(" {")
@@ -156,87 +157,6 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	return b.Bytes(), nil
-}
-
-// writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
-// It returns the determined 'useColor' boolean for use by field formatters.
-func (f *consoleFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
-	// Timestamp
-	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
-	b.WriteByte(' ')
-
-	enableLogLevelColor := f.isEnableColorSet && f.enableColor
-	levelString := fmt.Sprintf("[%s]", e.Severity)
-
-	if c, ok := levelColorMap[e.Severity]; ok && enableLogLevelColor {
-		// Explicitly enable or disable color on the object for this call.
-		if useColor {
-			c.EnableColor()
-		} else {
-			c.DisableColor()
-		}
-		b.WriteString(c.Sprint(levelString))
-	} else {
-		b.WriteString(levelString)
-	}
-
-	b.WriteString(" ")
-
-	// Message
-	b.WriteString(strings.TrimRight(e.Message, "\n"))
-
-	return useColor
-}
-
-// aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
-func (f *textFormatter) aggregateFields(e *LogEntry) map[string]interface{} {
-	// Aggregate all structured data into a single map
-	fields := make(map[string]interface{})
-
-	// Copy payload fields first
-	for k, v := range e.Payload {
-		fields[k] = v
-	}
-
-	// Add special fields if they exist and are not already in the payload
-	if e.SourceLocation != nil {
-		if _, ok := fields["sourceLocation"]; !ok {
-			// Format source location for readability
-			fields["source"] = fmt.Sprintf("%s:%d", e.SourceLocation.File, e.SourceLocation.Line)
-		}
-	}
-
-	if e.Trace != "" {
-		fields["trace"] = e.Trace
-	}
-
-	if e.SpanID != "" {
-		fields["spanId"] = e.SpanID
-	}
-
-	if e.CorrelationID != "" {
-		fields["correlationId"] = e.CorrelationID
-	}
-
-	for k, v := range e.Labels {
-		fields[fmt.Sprintf("label.%s", k)] = v // Prefix to avoid key collisions
-	}
-
-	if e.HTTPRequest != nil {
-		// Extract the most useful parts of the HTTP request
-		if e.HTTPRequest.RequestMethod != "" {
-			fields["http.method"] = e.HTTPRequest.RequestMethod
-		}
-		if e.HTTPRequest.Status != 0 {
-			fields["http.status"] = e.HTTPRequest.Status
-		}
-		if e.HTTPRequest.RequestURL != "" {
-			fields["http.url"] = e.HTTPRequest.RequestURL
-		}
-	}
-
-	return fields
 }
 
 // writeFields formats and appends the key-value pairs to the buffer.
@@ -257,15 +177,86 @@ func (f *textFormatter) writeFields(b *bytes.Buffer, fields map[string]interface
 		b.WriteString(k)
 		b.WriteString("=")
 
-		// Handle strings and other types differently for quoting.
-		val := fields[k]
+		switch v := fields[k].(type) {
+		case string:
+			// b.WriteString("\"" + v + "\"")
+			b.WriteString(strconv.Quote(v))
+		case int:
+			scratch := [64]byte{}
 
-		if s, ok := val.(string); ok {
-			b.WriteString(fmt.Sprintf("%q", s))
-		} else {
-			b.WriteString(fmt.Sprint(val))
+			b.Write(strconv.AppendInt(scratch[:0], int64(v), 10))
+		case int32:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendInt(scratch[:0], int64(v), 10))
+		case int64:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendInt(scratch[:0], v, 10))
+		case float32:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendFloat(scratch[:0], float64(v), 'f', -1, 64))
+		case float64:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendFloat(scratch[:0], v, 'f', -1, 64))
+		case fmt.Stringer:
+			b.WriteString(v.String())
+		default:
+			b.WriteString(fmt.Sprint(v))
 		}
 	}
+}
+
+// aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
+func aggregateFields(e *LogEntry) map[string]interface{} {
+	// Aggregate all structured data into a single map
+	fields := make(map[string]interface{})
+
+	// Copy payload fields first
+	for k, v := range e.Payload {
+		fields[k] = v
+	}
+
+	// Add special fields if they exist and are not already in the payload
+	if e.SourceLocation != nil {
+		if _, ok := fields["sourceLocation"]; !ok {
+			// Format source location for readability
+			fields["source"] = e.SourceLocation.File + ":" + strconv.Itoa(e.SourceLocation.Line)
+		}
+	}
+
+	if e.Trace != "" {
+		fields["trace"] = e.Trace
+	}
+
+	if e.SpanID != "" {
+		fields["spanId"] = e.SpanID
+	}
+
+	if e.CorrelationID != "" {
+		fields["correlationId"] = e.CorrelationID
+	}
+
+	for k, v := range e.Labels {
+		fields["label."+k] = v // Prefix to avoid key collisions
+	}
+
+	if e.HTTPRequest != nil {
+		// Extract the most useful parts of the HTTP request
+		if e.HTTPRequest.RequestMethod != "" {
+			fields["http.method"] = e.HTTPRequest.RequestMethod
+		}
+		if e.HTTPRequest.Status != 0 {
+			fields["http.status"] = e.HTTPRequest.Status
+		}
+		if e.HTTPRequest.RequestURL != "" {
+			fields["http.url"] = e.HTTPRequest.RequestURL
+		}
+	}
+
+	return fields
 }
 
 // ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
@@ -295,7 +286,6 @@ const (
 // consoleFormatter provides a rich, developer-focused text format.
 // It supports highlighting specific key-value pairs to improve readability.
 type consoleFormatter struct {
-	*textFormatter
 	enableColor      bool
 	isEnableColorSet bool
 	highlightColors  map[string]*color.Color
@@ -307,7 +297,6 @@ type ConsoleFormatterOption func(*consoleFormatter)
 // NewConsoleFormatter creates a new ConsoleFormatter.
 func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	formatter := &consoleFormatter{
-		textFormatter:    &textFormatter{},
 		enableColor:      false,
 		isEnableColorSet: false,
 		highlightColors:  make(map[string]*color.Color),
@@ -374,7 +363,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	f.writeHeader(&b, e, useColor)
 
 	// Aggregate fields
-	fields := f.aggregateFields(e)
+	fields := aggregateFields(e)
 
 	// Custom field formatting with highlighting
 	if len(fields) > 0 {
@@ -399,6 +388,37 @@ func (f *consoleFormatter) shouldUseColor() bool {
 	}
 
 	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
+}
+
+// writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
+// It returns the determined 'useColor' boolean for use by field formatters.
+func (f *consoleFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
+
+	enableLogLevelColor := f.isEnableColorSet && f.enableColor
+	levelString := fmt.Sprintf("[%s]", e.Severity)
+
+	if c, ok := levelColorMap[e.Severity]; ok && enableLogLevelColor {
+		// Explicitly enable or disable color on the object for this call.
+		if useColor {
+			c.EnableColor()
+		} else {
+			c.DisableColor()
+		}
+		b.WriteString(c.Sprint(levelString))
+	} else {
+		b.WriteString(levelString)
+	}
+
+	b.WriteString(" ")
+
+	// Message
+	b.WriteString(strings.TrimRight(e.Message, "\n"))
+
+	return useColor
 }
 
 // writeHighlightedFields formats and appends key-value pairs with highlighting.
