@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -355,55 +354,55 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
-func aggregateFields(e *LogEntry) map[string]interface{} {
-	// Aggregate all structured data into a single map
-	fields := make(map[string]interface{})
+// // aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
+// func aggregateFields(e *LogEntry) map[string]interface{} {
+// 	// Aggregate all structured data into a single map
+// 	fields := make(map[string]interface{})
 
-	// Copy payload fields first
-	for k, v := range e.Payload {
-		fields[k] = v
-	}
+// 	// Copy payload fields first
+// 	for k, v := range e.Payload {
+// 		fields[k] = v
+// 	}
 
-	// Add special fields if they exist and are not already in the payload
-	if e.SourceLocation != nil {
-		if _, ok := fields["sourceLocation"]; !ok {
-			// Format source location for readability
-			fields["source"] = e.SourceLocation.File + ":" + strconv.Itoa(e.SourceLocation.Line)
-		}
-	}
+// 	// Add special fields if they exist and are not already in the payload
+// 	if e.SourceLocation != nil {
+// 		if _, ok := fields["sourceLocation"]; !ok {
+// 			// Format source location for readability
+// 			fields["source"] = e.SourceLocation.File + ":" + strconv.Itoa(e.SourceLocation.Line)
+// 		}
+// 	}
 
-	if e.Trace != "" {
-		fields["trace"] = e.Trace
-	}
+// 	if e.Trace != "" {
+// 		fields["trace"] = e.Trace
+// 	}
 
-	if e.SpanID != "" {
-		fields["spanId"] = e.SpanID
-	}
+// 	if e.SpanID != "" {
+// 		fields["spanId"] = e.SpanID
+// 	}
 
-	if e.CorrelationID != "" {
-		fields["correlationId"] = e.CorrelationID
-	}
+// 	if e.CorrelationID != "" {
+// 		fields["correlationId"] = e.CorrelationID
+// 	}
 
-	for k, v := range e.Labels {
-		fields["label."+k] = v // Prefix to avoid key collisions
-	}
+// 	for k, v := range e.Labels {
+// 		fields["label."+k] = v // Prefix to avoid key collisions
+// 	}
 
-	if e.HTTPRequest != nil {
-		// Extract the most useful parts of the HTTP request
-		if e.HTTPRequest.RequestMethod != "" {
-			fields["http.method"] = e.HTTPRequest.RequestMethod
-		}
-		if e.HTTPRequest.Status != 0 {
-			fields["http.status"] = e.HTTPRequest.Status
-		}
-		if e.HTTPRequest.RequestURL != "" {
-			fields["http.url"] = e.HTTPRequest.RequestURL
-		}
-	}
+// 	if e.HTTPRequest != nil {
+// 		// Extract the most useful parts of the HTTP request
+// 		if e.HTTPRequest.RequestMethod != "" {
+// 			fields["http.method"] = e.HTTPRequest.RequestMethod
+// 		}
+// 		if e.HTTPRequest.Status != 0 {
+// 			fields["http.status"] = e.HTTPRequest.Status
+// 		}
+// 		if e.HTTPRequest.RequestURL != "" {
+// 			fields["http.url"] = e.HTTPRequest.RequestURL
+// 		}
+// 	}
 
-	return fields
-}
+// 	return fields
+// }
 
 // ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
 type ColorAttribute int
@@ -502,22 +501,253 @@ func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOptio
 // Format overrides the default TextFormatter's field formatting to add highlighting.
 func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
+	var scratch [64]byte
+	var buf []byte
+	var b2 bytes.Buffer
 
-	// Since ConsoleFormatter embeds textFormatter, it can call its methods directly.
-	useColor := f.shouldUseColor()
+	isUseColor := f.shouldUseColor()
 
-	f.writeHeader(&b, e, useColor)
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
 
-	// Aggregate fields
-	fields := aggregateFields(e)
+	enableLogLevelColor := f.isEnableColorSet && f.enableColor
 
-	// Custom field formatting with highlighting
-	if len(fields) > 0 {
-		b.WriteString(" {")
+	if c, ok := levelColorMap[e.Severity]; ok && enableLogLevelColor {
+		// Explicitly enable or disable color on the object for this call.
+		if isUseColor {
+			c.EnableColor()
+		} else {
+			c.DisableColor()
+		}
 
-		f.writeHighlightedFields(&b, fields, useColor)
+		b.WriteString(c.Sprintf("[%s]", e.Severity))
+	} else {
+		b.WriteByte('[')
+		b.WriteString(string(e.Severity))
+		b.WriteByte(']')
+	}
 
-		b.WriteString("}")
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString(e.Message)
+
+	buf = b.Bytes()
+
+	if len(buf) > 0 && buf[len(buf)-1] == '\n' {
+		b.Truncate(len(buf) - 1)
+	}
+
+	isSource := false
+	isTrace := false
+	isSpanID := false
+	isCorrelationId := false
+	isHttpRequest := false
+	isLabel := false
+	isPayload := false
+
+	b.WriteByte(' ')
+	b.WriteByte('{')
+	b.WriteByte(' ')
+
+	// Add special fields if they exist and are not already in the payload
+	if e.SourceLocation != nil {
+		if _, ok := e.Payload["sourceLocation"]; !ok {
+			// Format source location for readability
+			b.WriteString("source")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.SourceLocation.File)
+			b.WriteByte(':')
+			b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isSource = true
+		}
+	}
+
+	if e.Trace != "" {
+		b.WriteString("trace")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.Trace)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isTrace = true
+	}
+
+	if e.SpanID != "" {
+		b.WriteString("spanId")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.SpanID)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isSpanID = true
+	}
+
+	if e.CorrelationID != "" {
+		b.WriteString("correlationId")
+		b.WriteByte('=')
+		b.WriteByte('"')
+		b.WriteString(e.CorrelationID)
+		b.WriteByte('"')
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isCorrelationId = true
+	}
+
+	if e.HTTPRequest != nil {
+		// Extract the most useful parts of the HTTP request
+		if e.HTTPRequest.RequestMethod != "" {
+			b.WriteString("http.method")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.HTTPRequest.RequestMethod)
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.Status != 0 {
+			b.WriteString("http.status")
+			b.WriteByte('=')
+			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+			b.WriteString(",")
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.RequestURL != "" {
+			b.WriteString("http.url")
+			b.WriteByte('=')
+			b.WriteByte('"')
+			b.WriteString(e.HTTPRequest.RequestURL)
+			b.WriteByte('"')
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+	}
+
+	keys := make([]string, 0, len(e.Labels))
+
+	for k := range e.Labels {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		b.WriteString("label")
+		b.WriteByte('.')
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(strconv.Quote(e.Labels[key]))
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isLabel = true
+	}
+
+	keys = make([]string, 0, len(e.Payload))
+
+	for k := range e.Payload {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if isTrace && key == "trace" {
+			continue
+		}
+
+		if isSpanID && key == "spanId" {
+			continue
+		}
+
+		if isCorrelationId && key == "correlationId" {
+			continue
+		}
+
+		if isHttpRequest && key == "httpRequest" {
+			continue
+		}
+
+		b2.Reset()
+
+		switch val := e.Payload[key].(type) {
+		case string:
+			b2.WriteString(strconv.Quote(val))
+		case bool:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendBool(scratch[:0], val))
+		case int:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+		case int32:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+		case int64:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendInt(scratch[:0], val, 10))
+		case float32:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+		case float64:
+			scratch := [64]byte{}
+
+			b2.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+		case fmt.Stringer:
+			b2.WriteString(val.String())
+		default:
+			b2.WriteString(fmt.Sprint(val))
+		}
+
+		//-----
+		if c, ok := f.highlightColors[key]; ok && isUseColor {
+			c.EnableColor()
+
+			b.WriteString(c.Sprintf("%s=%s", key, b2.String()))
+		} else {
+			b.WriteString(key)
+			b.WriteByte('=')
+			b.Write(b2.Bytes())
+		}
+		//-----
+
+		b.WriteByte(',')
+		b.WriteByte(' ')
+
+		isPayload = true
+	}
+
+	buf = b.Bytes()
+
+	if isSource || isTrace || isSpanID || isCorrelationId || isHttpRequest || isLabel || isPayload {
+		b.Truncate(len(buf) - 2)
+		b.WriteByte(' ')
+		b.WriteByte('}')
+	} else {
+		// space }
+		b.Truncate(len(buf) - 3)
 	}
 
 	return b.Bytes(), nil
@@ -534,73 +764,6 @@ func (f *consoleFormatter) shouldUseColor() bool {
 	}
 
 	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsTerminal(os.Stderr.Fd())
-}
-
-// writeHeader writes the common part of a text log (timestamp, level, message) to the buffer.
-// It returns the determined 'useColor' boolean for use by field formatters.
-func (f *consoleFormatter) writeHeader(b *bytes.Buffer, e *LogEntry, useColor bool) bool {
-	// Timestamp
-	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
-	b.WriteByte(' ')
-
-	enableLogLevelColor := f.isEnableColorSet && f.enableColor
-	levelString := fmt.Sprintf("[%s]", e.Severity)
-
-	if c, ok := levelColorMap[e.Severity]; ok && enableLogLevelColor {
-		// Explicitly enable or disable color on the object for this call.
-		if useColor {
-			c.EnableColor()
-		} else {
-			c.DisableColor()
-		}
-		b.WriteString(c.Sprint(levelString))
-	} else {
-		b.WriteString(levelString)
-	}
-
-	b.WriteString(" ")
-
-	// Message
-	b.WriteString(strings.TrimRight(e.Message, "\n"))
-
-	return useColor
-}
-
-// writeHighlightedFields formats and appends key-value pairs with highlighting.
-func (f *consoleFormatter) writeHighlightedFields(b *bytes.Buffer, fields map[string]interface{}, useColor bool) {
-	keys := make([]string, 0, len(fields))
-
-	for k := range fields {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-
-		val := fields[k]
-		formattedVal := ""
-
-		if s, ok := val.(string); ok {
-			formattedVal = fmt.Sprintf("%q", s)
-		} else {
-			formattedVal = fmt.Sprint(val)
-		}
-
-		if c, ok := f.highlightColors[k]; ok && useColor {
-			c.EnableColor()
-
-			b.WriteString(c.Sprint(fmt.Sprintf("%s=%s", k, formattedVal)))
-		} else {
-			b.WriteString(k)
-			b.WriteString("=")
-			b.WriteString(formattedVal)
-		}
-	}
 }
 
 // toFatihAttribute converts our public ColorAttribute to an internal fatih/color.Attribute.

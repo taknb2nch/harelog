@@ -1,6 +1,7 @@
 package harelog
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -244,14 +245,22 @@ func TestConsoleFormatter(t *testing.T) {
 		}
 
 		output := string(b)
-		// Check for cyan color code around the userID key-value pair
 		cyan := color.New(color.FgCyan)
-		cyan.EnableColor() // Explicitly enable color for this test instance
+		cyan.EnableColor()
 		expectedHighlight := cyan.Sprint(`userID="user-123"`)
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("output should contain cyan highlighted userID.\nGot: %s\nWant containing: %s", output, expectedHighlight)
+
+		// Expected output with new order and spacing
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+
+		if output != expected {
+			// Use %q for clearer diffs with escape codes
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
-		// Check that other keys are not colored
+		// Check that other keys are not colored incorrectly (this check might be fragile)
 		expectedNonHighlight := cyan.Sprint(`action="logout"`)
 		if strings.Contains(output, expectedNonHighlight) {
 			t.Errorf("action key should not be highlighted: %s", output)
@@ -275,8 +284,15 @@ func TestConsoleFormatter(t *testing.T) {
 		cyanBold := color.New(color.FgCyan, color.Bold)
 		cyanBold.EnableColor()
 		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("output should contain bold cyan highlighted userID.\nGot: %s", output)
+
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+
+		if output != expected {
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
 	})
 
@@ -297,8 +313,15 @@ func TestConsoleFormatter(t *testing.T) {
 		yellow := color.New(color.FgYellow)
 		yellow.EnableColor()
 		expectedHighlight := yellow.Sprint(`userID="user-123"`)
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("expected userID to be yellow (last color wins).\nGot: %s", output)
+
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+
+		if output != expected {
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
 	})
 
@@ -319,8 +342,15 @@ func TestConsoleFormatter(t *testing.T) {
 		boldUnderline := color.New(color.Bold, color.Underline)
 		boldUnderline.EnableColor()
 		expectedHighlight := boldUnderline.Sprint(`userID="user-123"`)
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("expected userID to be bold and underlined (styles additive).\nGot: %s", output)
+
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+
+		if output != expected {
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
 	})
 
@@ -342,16 +372,23 @@ func TestConsoleFormatter(t *testing.T) {
 		greenUnderline := color.New(color.FgGreen, color.Underline)
 		greenUnderline.EnableColor()
 		expectedHighlight := greenUnderline.Sprint(`userID="user-123"`)
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("expected userID to be green and underlined (last config overwrites).\nGot: %s", output)
+
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+
+		if output != expected {
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
 	})
 
-	t.Run("Color Disabled", func(t *testing.T) {
+	t.Run("Color Disabled (LogLevel=false, Highlight=true)", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
 		f := NewConsoleFormatter(
-			WithLogLevelColor(false), // Explicitly disable color
+			WithLogLevelColor(false), // Explicitly disable log level color
 			WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
@@ -364,17 +401,24 @@ func TestConsoleFormatter(t *testing.T) {
 		cyanBold := color.New(color.FgCyan, color.Bold)
 		cyanBold.EnableColor()
 		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
+		plainInfo := "[INFO]" // Log level should be plain
+		// Payload keys sorted: action, requestID, userID
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, plainInfo, expectedHighlight)
 
-		// Check for plain text, no ANSI codes
-		if !strings.Contains(output, expectedHighlight) {
-			t.Errorf("output should contain bold cyan highlighted userID.\nGot: %s", output)
+		if output != expected {
+			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
-		if strings.Contains(output, "\x33[") {
-			t.Errorf("output should not contain any ANSI color codes when disabled: %s", output)
+		// Check specifically that the level is NOT colored
+		infoLevel := levelColorMap[LogLevelInfo]
+		infoLevel.EnableColor()
+		hlInfo := infoLevel.Sprint("[INFO]")
+		if strings.Contains(output, hlInfo) {
+			t.Errorf("Log level should NOT be colored when WithLogLevelColor(false) is used: %q", output)
 		}
 	})
 
 	t.Run("Panic on Invalid Attribute", func(t *testing.T) {
+		// This test remains unchanged
 		defer func() {
 			if r := recover(); r == nil {
 				t.Error("expected NewConsoleFormatter to panic with invalid ColorAttribute, but it did not")
@@ -474,5 +518,57 @@ func BenchmarkJsonFormatter_Complex(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		f.Format(e)
+	}
+}
+
+// BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
+func BenchmarkConsoleFormatter_Simple(b *testing.B) {
+	f := NewConsoleFormatter()
+	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:  "server started",
+		Severity: LogLevelInfo,
+		Time:     testTime,
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(entry)
+	}
+}
+
+// BenchmarkConsoleFormatter_Complex benchmarks the console formatter with a complex log entry.
+func BenchmarkConsoleFormatter_Complex(b *testing.B) {
+	f := NewConsoleFormatter(
+		WithLogLevelColor(true),
+		WithKeyHighlight("userID", FgCyan),
+		WithKeyHighlight("dept", FgMagenta, AttrBold),
+	)
+	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "complex event",
+		Severity:       LogLevelWarn,
+		Time:           testTime,
+		Trace:          "trace-id-123",
+		SpanID:         "span-id-456",
+		CorrelationID:  "corr-id-789",
+		Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
+		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+		HTTPRequest: &HTTPRequest{
+			RequestMethod: "POST",
+			Status:        401,
+			RequestURL:    "/api/v1/login",
+		},
+		Payload: map[string]interface{}{
+			"userID": "user-abc",
+			"dept":   "eng",
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(entry)
 	}
 }
