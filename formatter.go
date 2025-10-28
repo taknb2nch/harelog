@@ -123,19 +123,13 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
-	// Timestamp
-	b.Grow(32)
+	b.WriteString(`{"timestamp":"`)
 	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
-	b.WriteByte(' ')
-
-	// Log Level
-	b.WriteByte('[')
+	b.WriteString(`","severity":"`)
 	b.WriteString(string(e.Severity))
-	b.WriteByte(']')
-	b.WriteByte(' ')
-
-	// Message
-	b.WriteString(e.Message)
+	b.WriteString(`","message":`)
+	b.WriteString(strconv.Quote(e.Message))
+	b.WriteString(`}`)
 
 	return b.Bytes(), nil
 }
@@ -376,6 +370,10 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 }
 
 func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
+	return formatBasicMessage(e), nil
+}
+
+func formatBasicMessage(e *LogEntry) []byte {
 	var b bytes.Buffer
 
 	// Timestamp
@@ -392,7 +390,7 @@ func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	// Message
 	b.WriteString(e.Message)
 
-	return b.Bytes(), nil
+	return b.Bytes()
 }
 
 // ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
@@ -745,23 +743,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 }
 
 func (f *consoleFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
-	var b bytes.Buffer
-
-	// Timestamp
-	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
-	b.WriteByte(' ')
-
-	// Log Level
-	b.WriteByte('[')
-	b.WriteString(string(e.Severity))
-	b.WriteByte(']')
-	b.WriteByte(' ')
-
-	// Message
-	b.WriteString(e.Message)
-
-	return b.Bytes(), nil
+	return formatBasicMessage(e), nil
 }
 
 // should UseColor determines if color should be used for the output.

@@ -574,3 +574,98 @@ func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 		_, _ = f.Format(entry)
 	}
 }
+
+// TestJSONFormatter_FormatMessageOnly tests the simplified JSON output for warnings.
+func TestJSONFormatter_FormatMessageOnly(t *testing.T) {
+	t.Parallel()
+
+	f := NewJSONFormatter()
+	testTime := time.Date(2025, 10, 28, 17, 0, 0, 0, time.UTC)
+	testKey := "invalid key"
+	testType := "label"
+	testMessage := fmt.Sprintf("harelog: invalid key %q contains space, =, or \", %s ignored", testKey, testType)
+
+	entry := &LogEntry{
+		Message:  testMessage,
+		Severity: LogLevelWarn,
+		Time:     testTime,
+	}
+
+	b, err := f.FormatMessageOnly(entry)
+	if err != nil {
+		t.Fatalf("FormatMessageOnly() returned an error: %v", err)
+	}
+
+	// Expected JSON: {"timestamp":"...", "severity":"...", "message":"..."}
+	expected := `{"timestamp":"2025-10-28T17:00:00Z","severity":"WARN","message":"harelog: invalid key \"invalid key\" contains space, =, or \", label ignored"}`
+	got := string(b)
+
+	if got != expected {
+		t.Errorf("unexpected JSON output for FormatMessageOnly:\ngot:  %s\nwant: %s", got, expected)
+	}
+}
+
+// TestTextFormatter_FormatMessageOnly tests the simplified text output for warnings.
+func TestTextFormatter_FormatMessageOnly(t *testing.T) {
+	t.Parallel()
+
+	f := NewTextFormatter()
+	testTime := time.Date(2025, 10, 28, 17, 5, 0, 0, time.UTC)
+	testKey := "key=invalid"
+	testType := "field"
+	testMessage := fmt.Sprintf("harelog: invalid key %q contains space, =, or \", %s ignored", testKey, testType)
+
+	entry := &LogEntry{
+		Message:  testMessage,
+		Severity: LogLevelWarn,
+		Time:     testTime,
+	}
+
+	b, err := f.FormatMessageOnly(entry)
+	if err != nil {
+		t.Fatalf("FormatMessageOnly() returned an error: %v", err)
+	}
+
+	// Expected format: TIMESTAMP [LEVEL] MESSAGE
+	expected := `2025-10-28T17:05:00Z [WARN] harelog: invalid key "key=invalid" contains space, =, or ", field ignored`
+	got := string(b)
+
+	if got != expected {
+		t.Errorf("unexpected text output for FormatMessageOnly:\ngot:  %s\nwant: %s", got, expected)
+	}
+}
+
+// TestConsoleFormatter_FormatMessageOnly tests the simplified text output (no color) for warnings.
+func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
+	t.Parallel()
+
+	f := NewConsoleFormatter() // Use default (no color in test env)
+	testTime := time.Date(2025, 10, 28, 17, 10, 0, 0, time.UTC)
+	testKey := "key\"invalid"
+	testType := "label"
+	testMessage := fmt.Sprintf("harelog: invalid key %q contains space, =, or \", %s ignored", testKey, testType)
+
+	entry := &LogEntry{
+		Message:  testMessage,
+		Severity: LogLevelWarn,
+		Time:     testTime,
+	}
+
+	b, err := f.FormatMessageOnly(entry)
+	if err != nil {
+		t.Fatalf("FormatMessageOnly() returned an error: %v", err)
+	}
+
+	// Expected format: TIMESTAMP [LEVEL] MESSAGE (no color expected)
+	expected := `2025-10-28T17:10:00Z [WARN] harelog: invalid key "key\"invalid" contains space, =, or ", label ignored`
+	got := string(b)
+
+	if got != expected {
+		t.Errorf("unexpected console output for FormatMessageOnly:\ngot:  %s\nwant: %s", got, expected)
+	}
+
+	// Double-check that no ANSI escape codes are present
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("FormatMessageOnly output should not contain color codes, but got: %q", got)
+	}
+}
