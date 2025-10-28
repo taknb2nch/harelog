@@ -64,6 +64,7 @@ func (e *jsonEntry) Clear() {
 // Formatter is an interface for converting a logEntry into a byte slice.
 type Formatter interface {
 	Format(entry *LogEntry) ([]byte, error)
+	FormatMessageOnly(entry *LogEntry) ([]byte, error)
 }
 
 // jsonFormatter formats log entries as JSON.
@@ -117,6 +118,26 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 	out = append(out, payloadBytes[1:]...)
 
 	return out, nil
+}
+
+func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
+
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
+
+	// Log Level
+	b.WriteByte('[')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(']')
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString(e.Message)
+
+	return b.Bytes(), nil
 }
 
 // textFormatter formats log entries as human-readable text.
@@ -303,7 +324,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 		switch val := e.Payload[key].(type) {
 		case string:
-			b.WriteString(strconv.Quote(val))
+			appendStringValue(&b, val)
 		case bool:
 			scratch := [64]byte{}
 
@@ -329,9 +350,9 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
 		case fmt.Stringer:
-			b.WriteString(val.String())
+			appendStringValue(&b, val.String())
 		default:
-			b.WriteString(fmt.Sprint(val))
+			appendStringValue(&b, fmt.Sprint(val))
 		}
 
 		b.WriteByte(',')
@@ -354,55 +375,25 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// // aggregateFields gathers all relevant data from a LogEntry into a single map for formatting.
-// func aggregateFields(e *LogEntry) map[string]interface{} {
-// 	// Aggregate all structured data into a single map
-// 	fields := make(map[string]interface{})
+func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
 
-// 	// Copy payload fields first
-// 	for k, v := range e.Payload {
-// 		fields[k] = v
-// 	}
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
 
-// 	// Add special fields if they exist and are not already in the payload
-// 	if e.SourceLocation != nil {
-// 		if _, ok := fields["sourceLocation"]; !ok {
-// 			// Format source location for readability
-// 			fields["source"] = e.SourceLocation.File + ":" + strconv.Itoa(e.SourceLocation.Line)
-// 		}
-// 	}
+	// Log Level
+	b.WriteByte('[')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(']')
+	b.WriteByte(' ')
 
-// 	if e.Trace != "" {
-// 		fields["trace"] = e.Trace
-// 	}
+	// Message
+	b.WriteString(e.Message)
 
-// 	if e.SpanID != "" {
-// 		fields["spanId"] = e.SpanID
-// 	}
-
-// 	if e.CorrelationID != "" {
-// 		fields["correlationId"] = e.CorrelationID
-// 	}
-
-// 	for k, v := range e.Labels {
-// 		fields["label."+k] = v // Prefix to avoid key collisions
-// 	}
-
-// 	if e.HTTPRequest != nil {
-// 		// Extract the most useful parts of the HTTP request
-// 		if e.HTTPRequest.RequestMethod != "" {
-// 			fields["http.method"] = e.HTTPRequest.RequestMethod
-// 		}
-// 		if e.HTTPRequest.Status != 0 {
-// 			fields["http.status"] = e.HTTPRequest.Status
-// 		}
-// 		if e.HTTPRequest.RequestURL != "" {
-// 			fields["http.url"] = e.HTTPRequest.RequestURL
-// 		}
-// 	}
-
-// 	return fields
-// }
+	return b.Bytes(), nil
+}
 
 // ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
 type ColorAttribute int
@@ -753,6 +744,26 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func (f *consoleFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
+
+	// Timestamp
+	b.Grow(32)
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
+
+	// Log Level
+	b.WriteByte('[')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(']')
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString(e.Message)
+
+	return b.Bytes(), nil
+}
+
 // should UseColor determines if color should be used for the output.
 func (f *consoleFormatter) shouldUseColor() bool {
 	if os.Getenv("HARELOG_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
@@ -791,5 +802,14 @@ func toFatihAttribute(attr ColorAttribute) color.Attribute {
 		return color.Underline
 	default:
 		panic(fmt.Sprintf("harelog: invalid ColorAttribute provided: %d", attr))
+	}
+}
+
+// appendStringValue use Quote for safety if needed
+func appendStringValue(b *bytes.Buffer, value string) {
+	if needsQuoting(value) {
+		b.WriteString(strconv.Quote(value))
+	} else {
+		b.WriteString(value)
 	}
 }

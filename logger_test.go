@@ -138,45 +138,91 @@ func TestLogLevels(t *testing.T) {
 
 // TestWithMethods verifies the immutability of the logger.
 func TestWithMethods(t *testing.T) {
-	t.Parallel()
+	t.Run("Valid labels and prefix", func(t *testing.T) {
+		var buf bytes.Buffer
+		l1 := New().WithOutput(&buf)
+		l2 := l1.WithPrefix("[request] ")
+		l3 := l2.WithLabels(map[string]string{"user": "test"})
 
-	var buf bytes.Buffer
-	l1 := New().WithOutput(&buf)
-	l2 := l1.WithPrefix("[request] ")
-	l3 := l2.WithLabels(map[string]string{"user": "test"})
+		// Ensure l1 and l2 are not modified
+		if l1.prefix != "" {
+			t.Error("l1 should not have a prefix")
+		}
+		if _, ok := l1.labels["user"]; ok {
+			t.Error("l1 should not have labels")
+		}
+		if l2.prefix == "" {
+			t.Error("l2 should have a prefix")
+		}
+		if _, ok := l2.labels["user"]; ok {
+			t.Error("l2 should not have labels")
+		}
 
-	// Ensure l1 and l2 are not modified
-	if l1.prefix != "" {
-		t.Error("l1 should not have a prefix")
-	}
-	if _, ok := l1.labels["user"]; ok {
-		t.Error("l1 should not have labels")
-	}
-	if l2.prefix == "" {
-		t.Error("l2 should have a prefix")
-	}
-	if _, ok := l2.labels["user"]; ok {
-		t.Error("l2 should not have labels")
-	}
+		// Test output of the final logger
+		l3.Infof("test message")
+		output := buf.String()
+		if !strings.Contains(output, "[request] test message") {
+			t.Errorf("output should contain prefix and message, got: %s", output)
+		}
+		if !strings.Contains(output, `"user":"test"`) {
+			t.Errorf("output should contain labels, got: %s", output)
+		}
+	})
 
-	// Test output of the final logger
-	l3.Infof("test message")
-	output := buf.String()
-	if !strings.Contains(output, "[request] test message") {
-		t.Errorf("output should contain prefix and message, got: %s", output)
-	}
-	if !strings.Contains(output, `"user":"test"`) {
-		t.Errorf("output should contain labels, got: %s", output)
-	}
+	t.Run("Invalid labels are ignored and warn", func(t *testing.T) {
+		var buf bytes.Buffer
+		// Use text formatter for easier stderr assertion
+		l1 := New(WithOutput(&buf), WithFormatter(NewTextFormatter()))
+
+		// Capture stderr
+		stopCapture := captureStderr(t)
+
+		l2 := l1.WithLabels(map[string]string{
+			"valid_key":   "value1",
+			"invalid key": "value2", // Contains space
+			"key=invalid": "value3", // Contains =
+			`key"invalid`: "value4", // Contains "
+		})
+
+		// Stop capturing and get output
+		stderrOutput := stopCapture()
+
+		// Check stderr warnings (assuming TextFormatter.FormatMessageOnly outputs "[LEVEL] MESSAGE")
+		// We ignore the timestamp part of the log.
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "invalid key" contains space, =, or ", label ignored`) {
+			t.Errorf("expected stderr warning for 'invalid key', got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "key=invalid" contains space, =, or ", label ignored`) {
+			t.Errorf("expected stderr warning for 'key=invalid', got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "key\"invalid" contains space, =, or ", label ignored`) {
+			t.Errorf("expected stderr warning for 'key\"invalid', got: %s", stderrOutput)
+		}
+
+		// Check that the logger context was not mutated
+		if _, ok := l1.labels["valid_key"]; ok {
+			t.Error("original logger was mutated")
+		}
+
+		// Check that only the valid key was added
+		if _, ok := l2.labels["invalid key"]; ok {
+			t.Error("invalid key 'invalid key' should not have been added")
+		}
+		if _, ok := l2.labels["key=invalid"]; ok {
+			t.Error("invalid key 'key=invalid' should not have been added")
+		}
+		if _, ok := l2.labels[`key"invalid`]; ok {
+			t.Error("invalid key 'key\"invalid' should not have been added")
+		}
+		if v, ok := l2.labels["valid_key"]; !ok || v != "value1" {
+			t.Error("valid key 'valid_key' was not added correctly")
+		}
+	})
 }
 
 // TestWithMethod verifies the functionality of the contextual logger.
 func TestWithMethod(t *testing.T) {
-	t.Parallel()
-
 	t.Run("Context is added to logs", func(t *testing.T) {
-		t.Parallel()
-
 		var buf bytes.Buffer
 
 		logger := New(WithOutput(&buf))
@@ -198,8 +244,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("Formatted logs include context", func(t *testing.T) {
-		t.Parallel()
-
 		var buf bytes.Buffer
 
 		logger := New(WithOutput(&buf))
@@ -225,8 +269,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("Special keys with wrong type are kept at top level", func(t *testing.T) {
-		t.Parallel()
-
 		var buf bytes.Buffer
 
 		logger := New(WithOutput(&buf))
@@ -252,8 +294,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("With is immutable", func(t *testing.T) {
-		t.Parallel()
-
 		var buf bytes.Buffer
 
 		parentLogger := New(WithOutput(&buf))
@@ -272,8 +312,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("Local scope overrides context", func(t *testing.T) {
-		t.Parallel()
-
 		var buf bytes.Buffer
 
 		logger := New(WithOutput(&buf))
@@ -292,8 +330,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("Panics on odd number of arguments", func(t *testing.T) {
-		t.Parallel()
-
 		defer func() {
 			if r := recover(); r == nil {
 				t.Error("expected With to panic with an odd number of arguments, but it did not")
@@ -304,8 +340,6 @@ func TestWithMethod(t *testing.T) {
 	})
 
 	t.Run("Panics on non-string key", func(t *testing.T) {
-		t.Parallel()
-
 		defer func() {
 			if r := recover(); r == nil {
 				t.Error("expected With to panic with a non-string key, but it did not")
@@ -313,6 +347,55 @@ func TestWithMethod(t *testing.T) {
 		}()
 		logger := New()
 		_ = logger.With(123, "value1")
+	})
+
+	t.Run("Invalid keys are ignored and warn", func(t *testing.T) {
+		var buf bytes.Buffer
+		// Use text formatter for easier stderr assertion
+		l1 := New(WithOutput(&buf), WithFormatter(NewTextFormatter()))
+
+		// Capture stderr
+		stopCapture := captureStderr(t)
+
+		l2 := l1.With(
+			"valid_key", "value1",
+			"invalid key", "value2", // Contains space
+			"key=invalid", "value3", // Contains =
+			`key"invalid`, "value4", // Contains "
+		)
+
+		// Stop capturing and get output
+		stderrOutput := stopCapture()
+
+		// Check stderr warnings (assuming TextFormatter.FormatMessageOnly outputs "[LEVEL] MESSAGE")
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "invalid key" contains space, =, or ", field ignored`) {
+			t.Errorf("expected stderr warning for 'invalid key', got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "key=invalid" contains space, =, or ", field ignored`) {
+			t.Errorf("expected stderr warning for 'key=invalid', got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "key\"invalid" contains space, =, or ", field ignored`) {
+			t.Errorf("expected stderr warning for 'key\"invalid', got: %s", stderrOutput)
+		}
+
+		// Check that the logger context was not mutated
+		if _, ok := l1.payload["valid_key"]; ok {
+			t.Error("original logger was mutated")
+		}
+
+		// Check that only the valid key was added
+		if _, ok := l2.payload["invalid key"]; ok {
+			t.Error("invalid key 'invalid key' should not have been added")
+		}
+		if _, ok := l2.payload["key=invalid"]; ok {
+			t.Error("invalid key 'key=invalid' should not have been added")
+		}
+		if _, ok := l2.payload[`key"invalid`]; ok {
+			t.Error("invalid key 'key\"invalid' should not have been added")
+		}
+		if v, ok := l2.payload["valid_key"]; !ok || v != "value1" {
+			t.Error("valid key 'valid_key' was not added correctly")
+		}
 	})
 }
 
@@ -406,7 +489,10 @@ func TestDefaultLogger(t *testing.T) {
 	setup := func() *bytes.Buffer {
 		buf := &bytes.Buffer{}
 		// Create a clean logger instance and set it as the default
+		// This must be locked because it modifies the global `std`.
+		stdMutex.Lock()
 		std = New(WithOutput(buf))
+		stdMutex.Unlock()
 		return buf
 	}
 
@@ -441,7 +527,7 @@ func TestDefaultLogger(t *testing.T) {
 		if !strings.Contains(got, "[INFO] text output test") {
 			t.Errorf("output does not contain text message: %s", got)
 		}
-		if !strings.Contains(got, `{ key="value" }`) {
+		if !strings.Contains(got, `{ key=value }`) {
 			t.Errorf("output does not contain text payload: %s", got)
 		}
 		if strings.HasPrefix(got, "{") {
@@ -451,7 +537,11 @@ func TestDefaultLogger(t *testing.T) {
 
 	t.Run("Concurrency", func(t *testing.T) {
 		// Set up a clean logger with a discard writer to avoid noisy output
+		// This setup must also lock std
+		stdMutex.Lock()
 		std = New(WithOutput(io.Discard))
+		stdMutex.Unlock()
+
 		var wg sync.WaitGroup
 		for i := 0; i < 50; i++ {
 			wg.Add(1)
@@ -718,7 +808,7 @@ func TestFormatters(t *testing.T) {
 		if !strings.Contains(got, "[INFO] text test") {
 			t.Errorf("output does not contain text message: %s", got)
 		}
-		if !strings.Contains(got, `{ key="value" }`) {
+		if !strings.Contains(got, `{ key=value }`) {
 			t.Errorf("output does not contain text payload: %s", got)
 		}
 		if strings.HasPrefix(got, "{") {
@@ -814,8 +904,6 @@ func TestAutoSource_Modes(t *testing.T) {
 
 // TestNew_WithOptions verifies that all functional options passed to New() are correctly applied.
 func TestNew_WithOptions(t *testing.T) {
-	t.Parallel()
-
 	t.Run("Default values", func(t *testing.T) {
 		l := New()
 		if l.out != os.Stderr {
@@ -830,8 +918,7 @@ func TestNew_WithOptions(t *testing.T) {
 	})
 
 	t.Run("With all functional options", func(t *testing.T) {
-		t.Parallel()
-
+		// t.Parallel() // <--- 親が並列ではないため、サブテストも並列化しません
 		var buf bytes.Buffer
 		labels := map[string]string{"env": "test"}
 
@@ -873,6 +960,51 @@ func TestNew_WithOptions(t *testing.T) {
 		}
 		if logger.payload["common_key"] != "common_value" {
 			t.Error("WithFields failed")
+		}
+	})
+
+	t.Run("With invalid options keys warns and ignores", func(t *testing.T) {
+		var buf bytes.Buffer
+		// Capture stderr
+		stopCapture := captureStderr(t)
+
+		logger := New(
+			WithOutput(&buf),
+			WithFormatter(NewTextFormatter()), // Use real text formatter
+			WithLabels(map[string]string{
+				"valid_label":   "label1",
+				"invalid label": "label2",
+			}),
+			WithFields(
+				"valid_field", "field1",
+				"invalid=field", "field2",
+			),
+		)
+
+		// Stop capturing and get output
+		stderrOutput := stopCapture()
+
+		// Check stderr warnings (assuming TextFormatter.FormatMessageOnly outputs "[LEVEL] MESSAGE")
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "invalid label" contains space, =, or ", label ignored`) {
+			t.Errorf("expected stderr warning for 'invalid label', got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "invalid=field" contains space, =, or ", field ignored`) {
+			t.Errorf("expected stderr warning for 'invalid=field', got: %s", stderrOutput)
+		}
+
+		// Check that only valid keys were added
+		if _, ok := logger.labels["invalid label"]; ok {
+			t.Error("invalid label key should not have been added")
+		}
+		if v, ok := logger.labels["valid_label"]; !ok || v != "label1" {
+			t.Error("valid label key was not added correctly")
+		}
+
+		if _, ok := logger.payload["invalid=field"]; ok {
+			t.Error("invalid field key should not have been added")
+		}
+		if v, ok := logger.payload["valid_field"]; !ok || v != "field1" {
+			t.Error("valid field key was not added correctly")
 		}
 	})
 }
@@ -959,29 +1091,83 @@ func TestWithMethods_API(t *testing.T) {
 
 // TestSetDefaultFunctions_API verifies all SetDefault... functions.
 func TestSetDefaultFunctions_API(t *testing.T) {
-	originalStd := std
-	defer func() {
-		std = originalStd
-	}()
+	// !! IMPORTANT !!
+	// This test modifies the global `std` logger and MUST NOT run in parallel
+	// with other tests that also modify `std` (like TestDefaultLogger, etc.).
+	// Do NOT add t.Parallel() here or in subtests.
 
+	originalStd := std
+	t.Cleanup(func() {
+		// Restore the original std logger after this test and its subtests complete.
+		stdMutex.Lock()
+		std = originalStd
+		stdMutex.Unlock()
+	})
+
+	// This setup function is run by each subtest to ensure a clean state.
 	setup := func() {
-		std = New()
+		stdMutex.Lock()
+		std = New() // Reset to default
+		stdMutex.Unlock()
 	}
 
 	t.Run("SetDefaultLogLevel", func(t *testing.T) {
-		setup()
+		setup() // Reset std
+
 		SetDefaultLogLevel(LogLevelDebug)
+
+		// We must RLock to safely read std, matching the library's own practice.
+		stdMutex.RLock()
 		if std.logLevel != logLevelValueDebug {
 			t.Error("SetDefaultLogLevel was not applied")
 		}
+		stdMutex.RUnlock()
 	})
 
 	t.Run("SetDefaultAutoSource", func(t *testing.T) {
-		setup()
+		setup() // Reset std
+
 		SetDefaultAutoSource(SourceLocationModeAlways)
+
+		stdMutex.RLock()
 		if std.sourceLocationMode != SourceLocationModeAlways {
 			t.Error("SetDefaultAutoSource was not applied")
 		}
+		stdMutex.RUnlock()
+	})
+
+	t.Run("SetDefaultLabels with invalid keys", func(t *testing.T) {
+		setup() // Reset std
+
+		// Set a specific formatter for this test to check stderr
+		SetDefaultFormatter(NewTextFormatter())
+
+		// Capture stderr
+		stopCapture := captureStderr(t)
+
+		// This is the function under test
+		SetDefaultLabels(map[string]string{
+			"valid_label":   "label1",
+			"invalid label": "label2",
+		})
+
+		// Stop capturing and get output
+		stderrOutput := stopCapture()
+
+		// Check stderr warnings (assuming TextFormatter.FormatMessageOnly outputs "[LEVEL] MESSAGE")
+		if !strings.Contains(stderrOutput, `[WARN] harelog: invalid key "invalid label" contains space, =, or ", label ignored`) {
+			t.Errorf("expected stderr warning for 'invalid label', got: %s", stderrOutput)
+		}
+
+		// Check that only valid keys were added
+		stdMutex.RLock()
+		if _, ok := std.labels["invalid label"]; ok {
+			t.Error("invalid label key should not have been added to default logger")
+		}
+		if v, ok := std.labels["valid_label"]; !ok || v != "label1" {
+			t.Error("valid label key was not added correctly to default logger")
+		}
+		stdMutex.RUnlock()
 	})
 }
 
@@ -1390,5 +1576,41 @@ func BenchmarkLogWithFields(b *testing.B) {
 			"is_member", true,
 			"request_id", "abc-123-xyz",
 		)
+	}
+}
+
+// captureStderr captures all writes to os.Stderr during a test.
+// It returns a "stop" function that must be called to stop capturing.
+// This "stop" function closes the pipe and returns the captured string.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+
+	originalStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stderr = w
+
+	// Restore os.Stderr when the test completes
+	t.Cleanup(func() {
+		os.Stderr = originalStderr
+	})
+
+	return func() string {
+		// Close the writer end of the pipe to signal EOF
+		w.Close()
+
+		// Read all data from the reader end
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Logf("Warning: failed to read from stderr pipe: %v", err)
+		}
+		r.Close()
+
+		// Restore immediately, just in case (though Cleanup handles it)
+		os.Stderr = originalStderr
+
+		return buf.String()
 	}
 }

@@ -46,7 +46,6 @@ func TestJSONFormatter_Format(t *testing.T) {
 	}
 }
 
-// WithTextLevelColor(false)
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -94,7 +93,8 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 				// ★FIX: No space before {, payload keys are sorted, bool/int formats
-				expected: `2025-09-30T14:00:00Z [ERROR] request failed { active=true, path="/api/v1/users", status=500 }`,
+				// "path"の値は特殊文字を含まないためクォートしない ( / は特殊文字ではないという前提)
+				expected: `2025-09-30T14:00:00Z [ERROR] request failed { active=true, path=/api/v1/users, status=500 }`,
 			},
 			{
 				name: "Message with all special fields (fixed order + map sort)",
@@ -119,7 +119,8 @@ func TestTextFormatter_Format(t *testing.T) {
 				},
 				// ★FIX: This is the new deterministic order:
 				// {StructFields(fixed)} {Labels(sorted)} {Payload(sorted)}
-				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go:152", trace="trace-id-123", spanId="span-id-456", correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.cluster="A", label.region="jp-east", dept="eng", userID="user-abc" }`,
+				// "dept" と "userID" は特殊文字を含まないためクォートしない
+				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go:152", trace="trace-id-123", spanId="span-id-456", correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.cluster="A", label.region="jp-east", dept=eng, userID=user-abc }`,
 			},
 			{
 				name: "Payload with duplicate struct fields (skips payload fields)",
@@ -134,7 +135,8 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 				// ★FIX: Ensures StructFields take precedence and payload duplicates are skipped
-				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace="trace-A", userID="user-123" }`,
+				// "userID" は特殊文字を含まないためクォートしない
+				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace="trace-A", userID=user-123 }`,
 			},
 		}
 
