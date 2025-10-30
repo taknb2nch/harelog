@@ -954,6 +954,10 @@ func (l *Logger) WithLabels(labels map[string]string) *Logger {
 	newLogger := l.Clone()
 
 	for k, v := range labels {
+		if handleInvalidKey(l, k, "label") {
+			continue
+		}
+
 		newLogger.labels[k] = v
 	}
 
@@ -986,6 +990,10 @@ func (l *Logger) With(kvs ...interface{}) *Logger {
 		key, ok := kvs[i].(string)
 		if !ok {
 			panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+		}
+
+		if handleInvalidKey(l, key, "field") {
+			continue
 		}
 
 		newLogger.payload[key] = kvs[i+1]
@@ -1640,6 +1648,10 @@ func WithPrefix(prefix string) Option {
 func WithLabels(labels map[string]string) Option {
 	return func(l *Logger) {
 		for k, v := range labels {
+			if handleInvalidKey(l, k, "label") {
+				continue
+			}
+
 			l.labels[k] = v
 		}
 	}
@@ -1658,6 +1670,10 @@ func WithFields(kvs ...interface{}) Option {
 			key, ok := kvs[i].(string)
 			if !ok {
 				panic(fmt.Sprintf("log.With: non-string key at argument position %d", i))
+			}
+
+			if handleInvalidKey(l, key, "field") {
+				continue
 			}
 
 			l.payload[key] = kvs[i+1]
@@ -1686,4 +1702,31 @@ func WithHooks(hooks ...Hook) Option {
 
 		l.hooks = append(l.hooks, hooks...)
 	}
+}
+
+// handleInvalidKey formats and prints a warning message for an invalid key to os.Stderr.
+// It returns true if the key was invalid (and a message was printed), false otherwise.
+func handleInvalidKey(l *Logger, key string, fieldType string) bool {
+	if isValidKey(key) {
+		return false
+	}
+
+	entry := &LogEntry{
+		Time:     time.Now(),
+		Severity: LogLevelWarn,
+		Message:  fmt.Sprintf("harelog: invalid key %q contains space, =, or \", %s ignored", key, fieldType),
+	}
+
+	b, err := l.formatter.FormatMessageOnly(entry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s [%s] %s\n",
+			time.Now().Format(time.RFC3339),
+			entry.Severity,
+			entry.Message,
+		)
+	} else {
+		fmt.Fprintln(os.Stderr, string(b))
+	}
+
+	return true
 }
