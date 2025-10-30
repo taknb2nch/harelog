@@ -669,3 +669,215 @@ func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
 		t.Errorf("FormatMessageOnly output should not contain color codes, but got: %q", got)
 	}
 }
+
+// TestLogfmtFormatter_Format verifies the behavior of the logfmtFormatter.
+func TestLogfmtFormatter_Format(t *testing.T) {
+	// Hijack time for predictable output
+	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+
+	// NewLogfmtFormatter() は、logfmt_formatter.go で実装されることを想定
+	f := NewLogfmtFormatter()
+
+	tests := []struct {
+		name     string
+		entry    *LogEntry
+		expected string
+	}{
+		{
+			name: "Simple message",
+			entry: &LogEntry{
+				Message:  "server started",
+				Severity: LogLevelInfo,
+				Time:     testTime,
+			},
+			// messageにスペースが含まれるためクォートされる
+			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="server started"`,
+		},
+		{
+			name: "Message with trailing newline (trims newline)",
+			entry: &LogEntry{
+				Message:  "message with newline\n",
+				Severity: LogLevelInfo,
+				Time:     testTime,
+			},
+			// messageがクォートされ、\n はトリムされる
+			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="message with newline"`,
+		},
+		{
+			name: "Message with simple payload (payload sorted)",
+			entry: &LogEntry{
+				Message:  "request failed",
+				Severity: LogLevelError,
+				Time:     testTime,
+				Payload: map[string]interface{}{
+					"status": 500,
+					"path":   "/api/v1/users", // "path" comes before "status"
+					"active": true,
+				},
+			},
+			// textFormatterと異なり { } で囲まない
+			// 値にスペース, =, " がないためクォートされない
+			expected: `timestamp=2025-09-30T14:00:00Z severity=ERROR message="request failed" active=true path=/api/v1/users status=500`,
+		},
+		{
+			name: "Message with all special fields (fixed order + map sort)",
+			entry: &LogEntry{
+				Message:        "complex event",
+				Severity:       LogLevelWarn,
+				Time:           testTime,
+				Trace:          "trace-id-123",
+				SpanID:         "span-id-456",
+				CorrelationID:  "corr-id-789",
+				Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
+				SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+				HTTPRequest: &HTTPRequest{
+					RequestMethod: "POST",
+					Status:        401,
+					RequestURL:    "/api/v1/login",
+				},
+				Payload: map[string]interface{}{
+					"userID": "user-abc",
+					"dept":   "eng", // dept, userID
+				},
+			},
+			// textFormatter と同じキー命名規則 (http.status, label.cluster) を想定
+			// logfmt の仕様に基づき、値に特殊文字がなければクォートしない
+			// "app/server.go:152" は ':' を含むが、logfmtのクォート対象(space, =, ")ではない
+			expected: `timestamp=2025-09-30T14:00:00Z severity=WARN message="complex event" source=app/server.go:152 trace=trace-id-123 spanId=span-id-456 correlationId=corr-id-789 http.method=POST http.status=401 http.url=/api/v1/login label.cluster=A label.region=jp-east dept=eng userID=user-abc`,
+		},
+		{
+			name: "Payload with duplicate struct fields (skips payload fields)",
+			entry: &LogEntry{
+				Message:  "duplicate fields test",
+				Severity: LogLevelInfo,
+				Time:     testTime,
+				Trace:    "trace-A", // This one should be written
+				Payload: map[string]interface{}{
+					"userID": "user-123",
+					"trace":  "trace-B", // This one should be skipped
+				},
+			},
+			// StructFields (trace=trace-A) が Payload (trace=trace-B) より優先される
+			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" trace=trace-A userID=user-123`,
+		},
+		{
+			name: "Payload requiring quotes (logfmt specific)",
+			entry: &LogEntry{
+				Message:  "logfmt quote test",
+				Severity: LogLevelDebug,
+				Time:     testTime,
+				Payload: map[string]interface{}{
+					"simple":    "value",
+					"has_eq":    "key=value",        // 値に =
+					"has_quote": "a \"quoted\" str", // 値に "
+					"empty":     "",                 // 空の値
+				},
+			},
+			// logfmtのクォーティングルールを検証
+			// キー/値のスペース、"、= の扱い
+			// "has_quote" の値は "a \"quoted\" str" となる
+			expected: `timestamp=2025-09-30T14:00:00Z severity=DEBUG message="logfmt quote test" empty="" has_eq="key=value" has_quote="a \"quoted\" str" simple=value`,
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel() // 内部でグローバルな状態を変更しないため Parallel を許可
+
+			b, err := f.Format(tc.entry)
+			if err != nil {
+				t.Fatalf("Format() returned an error: %v", err)
+			}
+			got := string(b)
+			if got != tc.expected {
+				t.Errorf("unexpected logfmt output:\ngot:  %s\nwant: %s", got, tc.expected)
+			}
+		})
+	}
+}
+
+// TestLogfmtFormatter_FormatMessageOnly tests the simplified logfmt output for warnings.
+func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
+	t.Parallel()
+
+	f := NewLogfmtFormatter()
+	testTime := time.Date(2025, 10, 28, 17, 15, 0, 0, time.UTC)
+	testKey := "key=invalid"
+	testType := "field"
+	testMessage := fmt.Sprintf("harelog: invalid key %q contains space, =, or \", %s ignored", testKey, testType)
+
+	entry := &LogEntry{
+		Message:  testMessage,
+		Severity: LogLevelWarn,
+		Time:     testTime,
+	}
+
+	b, err := f.FormatMessageOnly(entry)
+	if err != nil {
+		t.Fatalf("FormatMessageOnly() returned an error: %v", err)
+	}
+
+	// Expected logfmt format: timestamp=... severity=... message=...
+	// メッセージ内にスペース、"、= が含まれるため、全体がクォートされ、内部の " がエスケープされる
+	expected := `timestamp=2025-10-28T17:15:00Z severity=WARN message="harelog: invalid key \"key=invalid\" contains space, =, or \", field ignored"`
+	got := string(b)
+
+	if got != expected {
+		t.Errorf("unexpected logfmt output for FormatMessageOnly:\ngot:  %s\nwant: %s", got, expected)
+	}
+
+	// Double-check that no ANSI escape codes are present (logfmt should never have color)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("FormatMessageOnly output for logfmt should not contain color codes, but got: %q", got)
+	}
+}
+
+// BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
+	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:  "server started",
+		Severity: LogLevelInfo,
+		Time:     benchmarkTime,
+	}
+	f := NewLogfmtFormatter()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(entry)
+	}
+}
+
+// BenchmarkLogfmtFormatter_Complex benchmarks formatting a complex log entry.
+func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
+	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "complex event with spaces", // ensure message is quoted
+		Severity:       LogLevelWarn,
+		Time:           benchmarkTime,
+		Trace:          "trace-id-123",
+		SpanID:         "span-id-456",
+		CorrelationID:  "corr-id-789",
+		Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
+		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+		HTTPRequest: &HTTPRequest{
+			RequestMethod: "POST",
+			Status:        401,
+			RequestURL:    "/api/v1/login",
+		},
+		Payload: map[string]interface{}{
+			"userID": "user-abc",
+			"dept":   "engineering",
+			"rate":   123.45,
+		},
+	}
+	f := NewLogfmtFormatter()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(entry)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,6 +121,8 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 	return out, nil
 }
 
+// FormatMessageOnly formats only the timestamp, severity, and message fields into logfmt format.
+// This is used internally by the logger to output warnings about invalid keys.
 func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
 
@@ -369,6 +372,8 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// FormatMessageOnly formats only the timestamp, severity, and message fields into logfmt format.
+// This is used internally by the logger to output warnings about invalid keys.
 func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return formatBasicMessage(e), nil
 }
@@ -789,9 +794,247 @@ func toFatihAttribute(attr ColorAttribute) color.Attribute {
 
 // appendStringValue use Quote for safety if needed
 func appendStringValue(b *bytes.Buffer, value string) {
+	value = strings.TrimSuffix(value, "\n")
+
 	if needsQuoting(value) {
 		b.WriteString(strconv.Quote(value))
 	} else {
 		b.WriteString(value)
 	}
+}
+
+// logfmtFormatter formats log entries into the logfmt key=value format.
+//
+// This format consists of space-separated key=value pairs.
+// Values containing spaces, '=', or '"' characters will be double-quoted.
+type logfmtFormatter struct{}
+
+// NewLogfmtFormatter creates a new LogfmtFormatter.
+func NewLogfmtFormatter() *logfmtFormatter {
+	return &logfmtFormatter{}
+}
+
+// Format converts a logEntry into a byte slice formatted as logfmt.
+// The output order is: timestamp, severity, message, special fields (source, trace, etc.),
+// sorted labels, and sorted payload fields.
+func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
+	var scratch [64]byte
+
+	// Timestamp
+	b.Grow(42)
+	b.WriteString("timestamp")
+	b.WriteByte('=')
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
+
+	// Severity
+	b.WriteString("severity")
+	b.WriteByte('=')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString("message")
+	b.WriteByte('=')
+
+	appendStringValue(&b, e.Message)
+
+	b.WriteByte(' ')
+
+	isTrace := false
+	isSpanID := false
+	isCorrelationId := false
+	isHttpRequest := false
+
+	// Add special fields if they exist and are not already in the payload
+	if e.SourceLocation != nil {
+		if _, ok := e.Payload["sourceLocation"]; !ok {
+			// Format source location for readability
+			b.WriteString("source")
+			b.WriteByte('=')
+
+			if needsQuoting(e.SourceLocation.File) {
+				b.WriteByte('"')
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+				b.WriteByte('"')
+			} else {
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+			}
+
+			b.WriteByte(' ')
+		}
+	}
+
+	if e.Trace != "" {
+		b.WriteString("trace")
+		b.WriteByte('=')
+		appendStringValue(&b, e.Trace)
+		b.WriteByte(' ')
+
+		isTrace = true
+	}
+
+	if e.SpanID != "" {
+		b.WriteString("spanId")
+		b.WriteByte('=')
+		appendStringValue(&b, e.SpanID)
+		b.WriteByte(' ')
+
+		isSpanID = true
+	}
+
+	if e.CorrelationID != "" {
+		b.WriteString("correlationId")
+		b.WriteByte('=')
+		appendStringValue(&b, e.CorrelationID)
+		b.WriteByte(' ')
+
+		isCorrelationId = true
+	}
+
+	if e.HTTPRequest != nil {
+		// Extract the most useful parts of the HTTP request
+		if e.HTTPRequest.RequestMethod != "" {
+			b.WriteString("http.method")
+			b.WriteByte('=')
+			appendStringValue(&b, e.HTTPRequest.RequestMethod)
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.Status != 0 {
+			b.WriteString("http.status")
+			b.WriteByte('=')
+			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+		if e.HTTPRequest.RequestURL != "" {
+			b.WriteString("http.url")
+			b.WriteByte('=')
+			appendStringValue(&b, e.HTTPRequest.RequestURL)
+			b.WriteByte(' ')
+
+			isHttpRequest = true
+		}
+	}
+
+	keys := make([]string, 0, len(e.Labels))
+
+	for k := range e.Labels {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		b.WriteString("label")
+		b.WriteByte('.')
+		b.WriteString(key)
+		b.WriteByte('=')
+		appendStringValue(&b, e.Labels[key])
+		b.WriteByte(' ')
+	}
+
+	keys = make([]string, 0, len(e.Payload))
+
+	for k := range e.Payload {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if isTrace && key == "trace" {
+			continue
+		}
+
+		if isSpanID && key == "spanId" {
+			continue
+		}
+
+		if isCorrelationId && key == "correlationId" {
+			continue
+		}
+
+		if isHttpRequest && key == "httpRequest" {
+			continue
+		}
+
+		b.WriteString(key)
+		b.WriteString("=")
+
+		switch val := e.Payload[key].(type) {
+		case string:
+			appendStringValue(&b, val)
+		case bool:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendBool(scratch[:0], val))
+		case int:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+		case int32:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+		case int64:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendInt(scratch[:0], val, 10))
+		case float32:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+		case float64:
+			scratch := [64]byte{}
+
+			b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+		case fmt.Stringer:
+			appendStringValue(&b, val.String())
+		default:
+			appendStringValue(&b, fmt.Sprint(val))
+		}
+
+		b.WriteByte(' ')
+	}
+
+	// last space
+	b.Truncate(b.Len() - 1)
+
+	return b.Bytes(), nil
+}
+
+// FormatMessageOnly formats only the timestamp, severity, and message fields into logfmt format.
+// This is used internally by the logger to output warnings about invalid keys.
+func (f *logfmtFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
+	var b bytes.Buffer
+
+	// Timestamp
+	b.Grow(42)
+	b.WriteString("timestamp")
+	b.WriteByte('=')
+	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.WriteByte(' ')
+
+	// Severity
+	b.WriteString("severity")
+	b.WriteByte('=')
+	b.WriteString(string(e.Severity))
+	b.WriteByte(' ')
+
+	// Message
+	b.WriteString("message")
+	b.WriteByte('=')
+
+	appendStringValue(&b, e.Message)
+
+	return b.Bytes(), nil
 }
