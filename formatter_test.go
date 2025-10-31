@@ -67,7 +67,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Severity: LogLevelInfo,
 					Time:     testTime,
 				},
-				// ★FIX: The new logic adds and removes {} if no fields exist
+
 				expected: `2025-09-30T14:00:00Z [INFO] server started`,
 			},
 			{
@@ -77,7 +77,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Severity: LogLevelInfo,
 					Time:     testTime,
 				},
-				// ★FIX: The new logic correctly trims the \n from the message
+
 				expected: `2025-09-30T14:00:00Z [INFO] message with newline`,
 			},
 			{
@@ -92,8 +92,7 @@ func TestTextFormatter_Format(t *testing.T) {
 						"active": true,
 					},
 				},
-				// ★FIX: No space before {, payload keys are sorted, bool/int formats
-				// "path"の値は特殊文字を含まないためクォートしない ( / は特殊文字ではないという前提)
+
 				expected: `2025-09-30T14:00:00Z [ERROR] request failed { active=true, path=/api/v1/users, status=500 }`,
 			},
 			{
@@ -117,10 +116,33 @@ func TestTextFormatter_Format(t *testing.T) {
 						"dept":   "eng", // dept, userID
 					},
 				},
-				// ★FIX: This is the new deterministic order:
-				// {StructFields(fixed)} {Labels(sorted)} {Payload(sorted)}
-				// "dept" と "userID" は特殊文字を含まないためクォートしない
-				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go:152", trace="trace-id-123", spanId="span-id-456", correlationId="corr-id-789", http.method="POST", http.status=401, http.url="/api/v1/login", label.cluster="A", label.region="jp-east", dept=eng, userID=user-abc }`,
+
+				expected: `2025-09-30T14:00:00Z [WARN] complex event { source=app/server.go:152, trace=trace-id-123, spanId=span-id-456, correlationId=corr-id-789, http.method=POST, http.status=401, http.url=/api/v1/login, label.cluster=A, label.region=jp-east, dept=eng, userID=user-abc }`,
+			},
+			{
+				name: "Message with all special fields (require quoting)",
+				entry: &LogEntry{
+					Message:       "complex event",
+					Severity:      LogLevelWarn,
+					Time:          testTime,
+					Trace:         "trace-id 123",
+					SpanID:        "span-id=456",
+					CorrelationID: "corr-id\"789\"",
+					Labels: map[string]string{
+						"region": "jp east",
+					},
+					SourceLocation: &SourceLocation{File: "app/server.go ", Line: 152},
+					HTTPRequest: &HTTPRequest{
+						RequestMethod: "POST 123",
+						Status:        401,
+						RequestURL:    "/api/v1/login?id=999",
+					},
+					Payload: map[string]interface{}{
+						"userID": "user abc",
+					},
+				},
+
+				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go :152", trace="trace-id 123", spanId="span-id=456", correlationId="corr-id\"789\"", http.method="POST 123", http.status=401, http.url="/api/v1/login?id=999", label.region="jp east", userID="user abc" }`,
 			},
 			{
 				name: "Payload with duplicate struct fields (skips payload fields)",
@@ -134,9 +156,8 @@ func TestTextFormatter_Format(t *testing.T) {
 						"trace":  "trace-B", // This one should be skipped
 					},
 				},
-				// ★FIX: Ensures StructFields take precedence and payload duplicates are skipped
-				// "userID" は特殊文字を含まないためクォートしない
-				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace="trace-A", userID=user-123 }`,
+
+				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace=trace-A, userID=user-123 }`,
 			},
 		}
 
@@ -171,7 +192,7 @@ func TestConsoleFormatter(t *testing.T) {
 		Message:  "user action",
 		Payload: map[string]interface{}{
 			"userID":    "user-123",
-			"requestID": "req-abc",
+			"requestID": "req abc",
 			"action":    "logout",
 		},
 	}
@@ -249,21 +270,21 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		cyan := color.New(color.FgCyan)
 		cyan.EnableColor()
-		expectedHighlight := cyan.Sprint(`userID="user-123"`)
+		expectedHighlight := cyan.Sprint(`userID=user-123`)
 
 		// Expected output with new order and spacing
 		infoLevel := levelColorMap[LogLevelInfo]
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			// Use %q for clearer diffs with escape codes
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
 		}
 		// Check that other keys are not colored incorrectly (this check might be fragile)
-		expectedNonHighlight := cyan.Sprint(`action="logout"`)
+		expectedNonHighlight := cyan.Sprint(`action=logout`)
 		if strings.Contains(output, expectedNonHighlight) {
 			t.Errorf("action key should not be highlighted: %s", output)
 		}
@@ -285,13 +306,13 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		cyanBold := color.New(color.FgCyan, color.Bold)
 		cyanBold.EnableColor()
-		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
+		expectedHighlight := cyanBold.Sprint(`userID=user-123`)
 
 		infoLevel := levelColorMap[LogLevelInfo]
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -314,13 +335,13 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		yellow := color.New(color.FgYellow)
 		yellow.EnableColor()
-		expectedHighlight := yellow.Sprint(`userID="user-123"`)
+		expectedHighlight := yellow.Sprint(`userID=user-123`)
 
 		infoLevel := levelColorMap[LogLevelInfo]
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -343,13 +364,13 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		boldUnderline := color.New(color.Bold, color.Underline)
 		boldUnderline.EnableColor()
-		expectedHighlight := boldUnderline.Sprint(`userID="user-123"`)
+		expectedHighlight := boldUnderline.Sprint(`userID=user-123`)
 
 		infoLevel := levelColorMap[LogLevelInfo]
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -373,13 +394,13 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		greenUnderline := color.New(color.FgGreen, color.Underline)
 		greenUnderline.EnableColor()
-		expectedHighlight := greenUnderline.Sprint(`userID="user-123"`)
+		expectedHighlight := greenUnderline.Sprint(`userID=user-123`)
 
 		infoLevel := levelColorMap[LogLevelInfo]
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -402,10 +423,10 @@ func TestConsoleFormatter(t *testing.T) {
 		output := string(b)
 		cyanBold := color.New(color.FgCyan, color.Bold)
 		cyanBold.EnableColor()
-		expectedHighlight := cyanBold.Sprint(`userID="user-123"`)
+		expectedHighlight := cyanBold.Sprint(`userID=user-123`)
 		plainInfo := "[INFO]" // Log level should be plain
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action="logout", requestID="req-abc", %s }`, plainInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, plainInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)

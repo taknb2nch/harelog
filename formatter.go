@@ -188,11 +188,19 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 			// Format source location for readability
 			b.WriteString("source")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.SourceLocation.File)
-			b.WriteByte(':')
-			b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
-			b.WriteByte('"')
+
+			if needsQuoting(e.SourceLocation.File) {
+				b.WriteByte('"')
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+				b.WriteByte('"')
+			} else {
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+			}
+
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -203,9 +211,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.Trace != "" {
 		b.WriteString("trace")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.Trace)
-		b.WriteByte('"')
+		appendStringValue(&b, e.Trace)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -215,9 +221,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.SpanID != "" {
 		b.WriteString("spanId")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.SpanID)
-		b.WriteByte('"')
+		appendStringValue(&b, e.SpanID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -227,9 +231,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.CorrelationID != "" {
 		b.WriteString("correlationId")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.CorrelationID)
-		b.WriteByte('"')
+		appendStringValue(&b, e.CorrelationID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -241,9 +243,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		if e.HTTPRequest.RequestMethod != "" {
 			b.WriteString("http.method")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.HTTPRequest.RequestMethod)
-			b.WriteByte('"')
+			appendStringValue(&b, e.HTTPRequest.RequestMethod)
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -261,9 +261,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		if e.HTTPRequest.RequestURL != "" {
 			b.WriteString("http.url")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.HTTPRequest.RequestURL)
-			b.WriteByte('"')
+			appendStringValue(&b, e.HTTPRequest.RequestURL)
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -284,7 +282,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		b.WriteByte('.')
 		b.WriteString(key)
 		b.WriteByte('=')
-		b.WriteString(strconv.Quote(e.Labels[key]))
+		appendStringValue(&b, e.Labels[key])
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -393,7 +391,7 @@ func formatBasicMessage(e *LogEntry) []byte {
 	b.WriteByte(' ')
 
 	// Message
-	b.WriteString(e.Message)
+	b.WriteString(strings.TrimSuffix(e.Message, "\n"))
 
 	return b.Bytes()
 }
@@ -552,11 +550,19 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 			// Format source location for readability
 			b.WriteString("source")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.SourceLocation.File)
-			b.WriteByte(':')
-			b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
-			b.WriteByte('"')
+
+			if needsQuoting(e.SourceLocation.File) {
+				b.WriteByte('"')
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+				b.WriteByte('"')
+			} else {
+				b.WriteString(e.SourceLocation.File)
+				b.WriteByte(':')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10))
+			}
+
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -567,9 +573,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.Trace != "" {
 		b.WriteString("trace")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.Trace)
-		b.WriteByte('"')
+		appendStringValue(&b, e.Trace)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -579,9 +583,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.SpanID != "" {
 		b.WriteString("spanId")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.SpanID)
-		b.WriteByte('"')
+		appendStringValue(&b, e.SpanID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -591,9 +593,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.CorrelationID != "" {
 		b.WriteString("correlationId")
 		b.WriteByte('=')
-		b.WriteByte('"')
-		b.WriteString(e.CorrelationID)
-		b.WriteByte('"')
+		appendStringValue(&b, e.CorrelationID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -605,9 +605,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		if e.HTTPRequest.RequestMethod != "" {
 			b.WriteString("http.method")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.HTTPRequest.RequestMethod)
-			b.WriteByte('"')
+			appendStringValue(&b, e.HTTPRequest.RequestMethod)
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -625,9 +623,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		if e.HTTPRequest.RequestURL != "" {
 			b.WriteString("http.url")
 			b.WriteByte('=')
-			b.WriteByte('"')
-			b.WriteString(e.HTTPRequest.RequestURL)
-			b.WriteByte('"')
+			appendStringValue(&b, e.HTTPRequest.RequestURL)
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -648,7 +644,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		b.WriteByte('.')
 		b.WriteString(key)
 		b.WriteByte('=')
-		b.WriteString(strconv.Quote(e.Labels[key]))
+		appendStringValue(&b, e.Labels[key])
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -684,7 +680,8 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 		switch val := e.Payload[key].(type) {
 		case string:
-			b2.WriteString(strconv.Quote(val))
+			// b2.WriteString(strconv.Quote(val))
+			appendStringValue(&b2, val)
 		case bool:
 			scratch := [64]byte{}
 
@@ -710,16 +707,18 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b2.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
 		case fmt.Stringer:
-			b2.WriteString(val.String())
+			// b2.WriteString(val.String())
+			appendStringValue(&b2, val.String())
 		default:
-			b2.WriteString(fmt.Sprint(val))
+			// b2.WriteString(fmt.Sprint(val))
+			appendStringValue(&b, fmt.Sprint(val))
 		}
 
 		//-----
 		if c, ok := f.highlightColors[key]; ok && isUseColor {
 			c.EnableColor()
 
-			b.WriteString(c.Sprintf("%s=%s", key, b2.String()))
+			b.WriteString(c.Sprintf("%s=%s", key, b2.Bytes()))
 		} else {
 			b.WriteString(key)
 			b.WriteByte('=')
