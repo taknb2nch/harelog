@@ -452,150 +452,6 @@ func TestConsoleFormatter(t *testing.T) {
 	})
 }
 
-// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkTextFormatter_Simple(b *testing.B) {
-	// Setup: Define entry locally
-	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:  "server started",
-		Severity: LogLevelInfo,
-		Time:     benchmarkTime,
-	}
-	f := NewTextFormatter()
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// The error is ignored in benchmarks as we test correctness in unit tests.
-		_, _ = f.Format(entry)
-	}
-}
-
-// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry
-// with all special fields (SourceLocation, HTTPRequest, Trace, etc.).
-func BenchmarkTextFormatter_Complex(b *testing.B) {
-	// Setup: Define entry locally
-	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:        "complex event",
-		Severity:       LogLevelWarn,
-		Time:           benchmarkTime,
-		Trace:          "trace-id-123",
-		SpanID:         "span-id-456",
-		CorrelationID:  "corr-id-789",
-		Labels:         map[string]string{"region": "jp-east"},
-		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
-		HTTPRequest: &HTTPRequest{
-			RequestMethod: "POST",
-			Status:        401,
-			RequestURL:    "/api/v1/login",
-		},
-		Payload: map[string]interface{}{
-			"userID": "user-abc",
-		},
-	}
-	f := NewTextFormatter()
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(entry)
-	}
-}
-
-func BenchmarkJsonFormatter_Simple(b *testing.B) {
-	f := &jsonFormatter{}
-	e := &LogEntry{
-		Message:  "hello",
-		Severity: "INFO",
-		Time:     time.Now(),
-		Labels: map[string]string{
-			"service": "core",
-			"env":     "prod",
-		},
-		Payload: map[string]any{
-			"user":  "takanobu",
-			"count": 3,
-		},
-	}
-
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		f.Format(e)
-	}
-}
-
-func BenchmarkJsonFormatter_Complex(b *testing.B) {
-	f := &jsonFormatter{}
-	e := &LogEntry{
-		Message:  "world",
-		Severity: "DEBUG",
-		Time:     time.Now(),
-		Payload: map[string]any{
-			"active": true,
-		},
-	}
-
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		f.Format(e)
-	}
-}
-
-// BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
-func BenchmarkConsoleFormatter_Simple(b *testing.B) {
-	f := NewConsoleFormatter()
-	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:  "server started",
-		Severity: LogLevelInfo,
-		Time:     testTime,
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(entry)
-	}
-}
-
-// BenchmarkConsoleFormatter_Complex benchmarks the console formatter with a complex log entry.
-func BenchmarkConsoleFormatter_Complex(b *testing.B) {
-	f := NewConsoleFormatter(
-		WithLogLevelColor(true),
-		WithKeyHighlight("userID", FgCyan),
-		WithKeyHighlight("dept", FgMagenta, AttrBold),
-	)
-	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:        "complex event",
-		Severity:       LogLevelWarn,
-		Time:           testTime,
-		Trace:          "trace-id-123",
-		SpanID:         "span-id-456",
-		CorrelationID:  "corr-id-789",
-		Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
-		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
-		HTTPRequest: &HTTPRequest{
-			RequestMethod: "POST",
-			Status:        401,
-			RequestURL:    "/api/v1/login",
-		},
-		Payload: map[string]interface{}{
-			"userID": "user-abc",
-			"dept":   "eng",
-		},
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(entry)
-	}
-}
-
 // TestJSONFormatter_FormatMessageOnly tests the simplified JSON output for warnings.
 func TestJSONFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
@@ -854,51 +710,133 @@ func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
 	}
 }
 
-// BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
-	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:  "server started",
-		Severity: LogLevelInfo,
-		Time:     benchmarkTime,
-	}
-	f := NewLogfmtFormatter()
+// --- Benchmark Setup ---
 
+// benchmarkTime is a fixed time shared across all benchmarks.
+var benchmarkTime = time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+
+// benchmarkEntrySimple is a shared, simple log entry for all "Simple" benchmarks.
+// It uses "server-started" (no spaces) to ensure a fair comparison,
+// preventing skewed allocations for logfmtFormatter which would otherwise need
+// to quote the message.
+var benchmarkEntrySimple = &LogEntry{
+	Message:  "server-started", // No space, fair to all formatters
+	Severity: LogLevelInfo,
+	Time:     benchmarkTime,
+}
+
+// benchmarkEntryComplex is a shared, complex log entry for all "Complex" benchmarks.
+// It includes all special fields (Trace, SpanID, HTTPRequest, etc.) and
+// a payload with multiple data types (string with spaces, float, bool)
+// to test quoting and type handling.
+var benchmarkEntryComplex = &LogEntry{
+	Message:        "complex event", // No space in message
+	Severity:       LogLevelWarn,
+	Time:           benchmarkTime,
+	Trace:          "trace-id-123",
+	SpanID:         "span-id-456",
+	CorrelationID:  "corr-id-789",
+	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
+	SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+	HTTPRequest: &HTTPRequest{
+		RequestMethod: "POST",
+		Status:        401,
+		RequestURL:    "/api/v1/login",
+	},
+	Payload: map[string]interface{}{
+		"userID": "user-abc",
+		"dept":   "eng department", // ★ Includes space to test quoting logic
+		"rate":   123.45,
+		"active": true,
+		"count":  int64(99),
+	},
+}
+
+// --- Benchmarks ---
+
+// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkTextFormatter_Simple(b *testing.B) {
+	f := NewTextFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(entry)
+		// The error is ignored in benchmarks as we test correctness in unit tests.
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
+	}
+}
+
+// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry.
+func BenchmarkTextFormatter_Complex(b *testing.B) {
+	f := NewTextFormatter()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkJsonFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkJsonFormatter_Simple(b *testing.B) {
+	f := &jsonFormatter{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
+	}
+}
+
+// BenchmarkJsonFormatter_Complex benchmarks formatting a complex log entry.
+func BenchmarkJsonFormatter_Complex(b *testing.B) {
+	f := &jsonFormatter{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
+func BenchmarkConsoleFormatter_Simple(b *testing.B) {
+	f := NewConsoleFormatter()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
+	}
+}
+
+// BenchmarkConsoleFormatter_Complex benchmarks the console formatter with a complex log entry.
+func BenchmarkConsoleFormatter_Complex(b *testing.B) {
+	// Highlight options are retained as they are a valid
+	// part of the ConsoleFormatter's complex use case.
+	f := NewConsoleFormatter(
+		WithLogLevelColor(true),
+		WithKeyHighlight("userID", FgCyan),
+		WithKeyHighlight("dept", FgMagenta, AttrBold),
+	)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
+	f := NewLogfmtFormatter()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
 	}
 }
 
 // BenchmarkLogfmtFormatter_Complex benchmarks formatting a complex log entry.
 func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
-	benchmarkTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:        "complex event with spaces", // ensure message is quoted
-		Severity:       LogLevelWarn,
-		Time:           benchmarkTime,
-		Trace:          "trace-id-123",
-		SpanID:         "span-id-456",
-		CorrelationID:  "corr-id-789",
-		Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
-		SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
-		HTTPRequest: &HTTPRequest{
-			RequestMethod: "POST",
-			Status:        401,
-			RequestURL:    "/api/v1/login",
-		},
-		Payload: map[string]interface{}{
-			"userID": "user-abc",
-			"dept":   "engineering",
-			"rate":   123.45,
-		},
-	}
 	f := NewLogfmtFormatter()
-
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(entry)
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
 	}
 }
