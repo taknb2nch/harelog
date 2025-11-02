@@ -60,6 +60,9 @@ The `requestID` and `remoteAddr` fields are automatically added to all logs.
 {"message":"user authenticated","severity":"INFO","userID":"user-456","requestID":"abc-123","remoteAddr":"127.0.0.1:12345",...}
 ```
 
+**Note on Key Validation:**
+To ensure valid structured logging, keys provided to `With`, `...w`, or option functions (e.g., `WithFields`) are validated. Keys containing a space, `=`, or `"` will be ignored, and a warning will be printed to `os.Stderr`.
+
 ### Logging with `context.Context` (`...Ctx` methods)
 
 For integration with tracing systems, you can use the `...Ctx` variants of the logging methods. `harelog` can automatically extract trace information from a `context.Context` (see Configuration section for setup).
@@ -112,27 +115,35 @@ prodLogger.Errorf("This WILL have source info.")
 
 #### TextFormatter
 
-The `TextFormatter` provides a simple, single-line text output. By default, it automatically enables color-coding for log levels when outputting to a terminal.
+The `TextFormatter` provides a simple, plain-text, single-line output (e.g., `TIME [LEVEL] message key=value`).
 
 ```go
-// Use the WithFormatter option to switch to the text logger.
+// Use the WithFormatter option to switch to the plain text logger.
 logger := harelog.New(
 	harelog.WithFormatter(harelog.NewTextFormatter()),
 )
+```
 
-// You can also explicitly control the log level coloring.
-textFormatter := harelog.NewTextFormatter(harelog.WithTextLevelColor(true))
+#### LogfmtFormatter
+
+The `LogfmtFormatter` is a high-performance, plain-text formatter that outputs logs in the `logfmt` key=value format (e.g., `timestamp=... severity=... message=... key=value`). It is ideal for production environments that use `logfmt` parsers and, like `TextFormatter`, does not include color.
+
+```go
+// Use the LogfmtFormatter for structured key=value text output.
+logger := harelog.New(
+	harelog.WithFormatter(harelog.NewLogfmtFormatter()),
+)
 ```
 
 #### ConsoleFormatter (for Development)
 
-For the ultimate developer experience, the `ConsoleFormatter` extends the `TextFormatter` with the ability to **highlight specific key-value pairs**. This makes it incredibly easy to spot important information like a `userID` or `traceID` in a sea of logs.
+For the ultimate developer experience, the `ConsoleFormatter` extends the `TextFormatter` logic with **log level coloring** and the ability to **highlight specific key-value pairs**. This makes it incredibly easy to spot important information like a `userID` or `traceID` in a sea of logs.
 
 ```go
 // Use the ConsoleFormatter to highlight important keys.
 formatter := harelog.NewConsoleFormatter(
 	// Enable coloring for log levels (e.g., [INFO] in green).
-	harelog.WithConsoleLevelColor(true),
+	harelog.WithLogLevelColor(true),
 	
 	// Define your highlight rules.
 	harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
@@ -159,22 +170,22 @@ HARELOG_LEVEL=debug go run main.go
 
 ### Color Output via Environment Variables
 
-The color output of `TextFormatter` and `ConsoleFormatter` can be controlled globally. This is useful for forcing color on or off in CI/CD environments or when piping output.
+The color output of the `ConsoleFormatter` can be controlled globally. This is useful for forcing color on or off in CI/CD environments or when piping output.
 
 - `NO_COLOR` or `HARELOG_NO_COLOR`
-  - If either of these environment variables is set to any non-empty value (e.g., `true`, `1`), color output will be disabled. This follows a [quasi-standard](https://no-color.org/) supported by many command-line tools. `HARELOG_NO_COLOR` takes precedence over `NO_COLOR`.
+	- If either of these environment variables is set to any non-empty value (e.g., `true`, `1`), color output will be disabled. This follows a [quasi-standard](https://no-color.org/) supported by many command-line tools. `HARELOG_NO_COLOR` takes precedence over `NO_COLOR`.
 
 - `HARELOG_FORCE_COLOR`
-  - If this is set to any non-empty value, color output will be forcibly enabled, even in non-TTY environments (like files or pipes).
+	- If this is set to any non-empty value, color output will be forcibly enabled, even in non-TTY environments (like files or pipes).
 
 #### Precedence
 
 The variables are evaluated in the following order of priority:
 
-1.  **`HARELOG_FORCE_COLOR`**: If set, color is **ON**.
-2.  **`HARELOG_NO_COLOR`**: If set, color is **OFF**.
-3.  **`NO_COLOR`**: If set, color is **OFF**.
-4.  **Default Behavior**: Automatic detection based on whether the output is a TTY.
+1.  **`HARELOG_FORCE_COLOR`**: If set, color is **ON**.
+2.  **`HARELOG_NO_COLOR`**: If set, color is **OFF**.
+3.  **`NO_COLOR`**: If set, color is **OFF**.
+4.  **Default Behavior**: Automatic detection based on whether the output is a TTY.
 
 ### Configuring for Google Cloud Trace
 
