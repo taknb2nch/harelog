@@ -152,8 +152,8 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	var buf []byte
 
 	// Timestamp
-	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Grow(128)
+	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
 	b.WriteByte(' ')
 
 	b.WriteByte('[')
@@ -269,91 +269,95 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	keys := make([]string, 0, len(e.Labels))
+	if len(e.Labels) > 0 {
+		keys := make([]string, 0, len(e.Labels))
 
-	for k := range e.Labels {
-		keys = append(keys, k)
+		for k := range e.Labels {
+			keys = append(keys, k)
+		}
+
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			b.WriteString("label")
+			b.WriteByte('.')
+			b.WriteString(key)
+			b.WriteByte('=')
+			appendStringValue(&b, e.Labels[key])
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isLabel = true
+		}
 	}
 
-	sort.Strings(keys)
+	if len(e.Payload) > 0 {
+		keys := make([]string, 0, len(e.Payload))
 
-	for _, key := range keys {
-		b.WriteString("label")
-		b.WriteByte('.')
-		b.WriteString(key)
-		b.WriteByte('=')
-		appendStringValue(&b, e.Labels[key])
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isLabel = true
-	}
-
-	keys = make([]string, 0, len(e.Payload))
-
-	for k := range e.Payload {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if isTrace && key == "trace" {
-			continue
+		for k := range e.Payload {
+			keys = append(keys, k)
 		}
 
-		if isSpanID && key == "spanId" {
-			continue
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			if isTrace && key == "trace" {
+				continue
+			}
+
+			if isSpanID && key == "spanId" {
+				continue
+			}
+
+			if isCorrelationId && key == "correlationId" {
+				continue
+			}
+
+			if isHttpRequest && key == "httpRequest" {
+				continue
+			}
+
+			b.WriteString(key)
+			b.WriteString("=")
+
+			switch val := e.Payload[key].(type) {
+			case string:
+				appendStringValue(&b, val)
+			case bool:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendBool(scratch[:0], val))
+			case int:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int32:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int64:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], val, 10))
+			case float32:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+			case float64:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+			case fmt.Stringer:
+				appendStringValue(&b, val.String())
+			default:
+				appendStringValue(&b, fmt.Sprint(val))
+			}
+
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isPayload = true
 		}
-
-		if isCorrelationId && key == "correlationId" {
-			continue
-		}
-
-		if isHttpRequest && key == "httpRequest" {
-			continue
-		}
-
-		b.WriteString(key)
-		b.WriteString("=")
-
-		switch val := e.Payload[key].(type) {
-		case string:
-			appendStringValue(&b, val)
-		case bool:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendBool(scratch[:0], val))
-		case int:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int32:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int64:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], val, 10))
-		case float32:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
-		case float64:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
-		case fmt.Stringer:
-			appendStringValue(&b, val.String())
-		default:
-			appendStringValue(&b, fmt.Sprint(val))
-		}
-
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isPayload = true
 	}
 
 	buf = b.Bytes()
@@ -500,8 +504,8 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	isUseColor := f.shouldUseColor()
 
 	// Timestamp
-	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Grow(128)
+	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
 	b.WriteByte(' ')
 
 	enableLogLevelColor := f.isEnableColorSet && f.enableColor
@@ -631,105 +635,109 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	keys := make([]string, 0, len(e.Labels))
+	if len(e.Labels) > 0 {
+		keys := make([]string, 0, len(e.Labels))
 
-	for k := range e.Labels {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		b.WriteString("label")
-		b.WriteByte('.')
-		b.WriteString(key)
-		b.WriteByte('=')
-		appendStringValue(&b, e.Labels[key])
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isLabel = true
-	}
-
-	keys = make([]string, 0, len(e.Payload))
-
-	for k := range e.Payload {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if isTrace && key == "trace" {
-			continue
+		for k := range e.Labels {
+			keys = append(keys, k)
 		}
 
-		if isSpanID && key == "spanId" {
-			continue
-		}
+		sort.Strings(keys)
 
-		if isCorrelationId && key == "correlationId" {
-			continue
-		}
-
-		if isHttpRequest && key == "httpRequest" {
-			continue
-		}
-
-		b2.Reset()
-
-		switch val := e.Payload[key].(type) {
-		case string:
-			// b2.WriteString(strconv.Quote(val))
-			appendStringValue(&b2, val)
-		case bool:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendBool(scratch[:0], val))
-		case int:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int32:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int64:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendInt(scratch[:0], val, 10))
-		case float32:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
-		case float64:
-			scratch := [64]byte{}
-
-			b2.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
-		case fmt.Stringer:
-			// b2.WriteString(val.String())
-			appendStringValue(&b2, val.String())
-		default:
-			// b2.WriteString(fmt.Sprint(val))
-			appendStringValue(&b, fmt.Sprint(val))
-		}
-
-		//-----
-		if c, ok := f.highlightColors[key]; ok && isUseColor {
-			c.EnableColor()
-
-			b.WriteString(c.Sprintf("%s=%s", key, b2.Bytes()))
-		} else {
+		for _, key := range keys {
+			b.WriteString("label")
+			b.WriteByte('.')
 			b.WriteString(key)
 			b.WriteByte('=')
-			b.Write(b2.Bytes())
+			appendStringValue(&b, e.Labels[key])
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isLabel = true
 		}
-		//-----
+	}
 
-		b.WriteByte(',')
-		b.WriteByte(' ')
+	if len(e.Payload) > 0 {
+		keys := make([]string, 0, len(e.Payload))
 
-		isPayload = true
+		for k := range e.Payload {
+			keys = append(keys, k)
+		}
+
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			if isTrace && key == "trace" {
+				continue
+			}
+
+			if isSpanID && key == "spanId" {
+				continue
+			}
+
+			if isCorrelationId && key == "correlationId" {
+				continue
+			}
+
+			if isHttpRequest && key == "httpRequest" {
+				continue
+			}
+
+			b2.Reset()
+
+			switch val := e.Payload[key].(type) {
+			case string:
+				// b2.WriteString(strconv.Quote(val))
+				appendStringValue(&b2, val)
+			case bool:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendBool(scratch[:0], val))
+			case int:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int32:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int64:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendInt(scratch[:0], val, 10))
+			case float32:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+			case float64:
+				scratch := [64]byte{}
+
+				b2.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+			case fmt.Stringer:
+				// b2.WriteString(val.String())
+				appendStringValue(&b2, val.String())
+			default:
+				// b2.WriteString(fmt.Sprint(val))
+				appendStringValue(&b, fmt.Sprint(val))
+			}
+
+			//-----
+			if c, ok := f.highlightColors[key]; ok && isUseColor {
+				c.EnableColor()
+
+				b.WriteString(c.Sprintf("%s=%s", key, b2.Bytes()))
+			} else {
+				b.WriteString(key)
+				b.WriteByte('=')
+				b.Write(b2.Bytes())
+			}
+			//-----
+
+			b.WriteByte(',')
+			b.WriteByte(' ')
+
+			isPayload = true
+		}
 	}
 
 	buf = b.Bytes()
@@ -821,10 +829,10 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 	var scratch [64]byte
 
 	// Timestamp
-	b.Grow(42)
+	b.Grow(128)
 	b.WriteString("timestamp")
 	b.WriteByte('=')
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
 	b.WriteByte(' ')
 
 	// Severity
@@ -924,85 +932,89 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	keys := make([]string, 0, len(e.Labels))
+	if len(e.Labels) > 0 {
+		keys := make([]string, 0, len(e.Labels))
 
-	for k := range e.Labels {
-		keys = append(keys, k)
+		for k := range e.Labels {
+			keys = append(keys, k)
+		}
+
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			b.WriteString("label")
+			b.WriteByte('.')
+			b.WriteString(key)
+			b.WriteByte('=')
+			appendStringValue(&b, e.Labels[key])
+			b.WriteByte(' ')
+		}
 	}
 
-	sort.Strings(keys)
+	if len(e.Payload) > 0 {
+		keys := make([]string, 0, len(e.Payload))
 
-	for _, key := range keys {
-		b.WriteString("label")
-		b.WriteByte('.')
-		b.WriteString(key)
-		b.WriteByte('=')
-		appendStringValue(&b, e.Labels[key])
-		b.WriteByte(' ')
-	}
-
-	keys = make([]string, 0, len(e.Payload))
-
-	for k := range e.Payload {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if isTrace && key == "trace" {
-			continue
+		for k := range e.Payload {
+			keys = append(keys, k)
 		}
 
-		if isSpanID && key == "spanId" {
-			continue
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			if isTrace && key == "trace" {
+				continue
+			}
+
+			if isSpanID && key == "spanId" {
+				continue
+			}
+
+			if isCorrelationId && key == "correlationId" {
+				continue
+			}
+
+			if isHttpRequest && key == "httpRequest" {
+				continue
+			}
+
+			b.WriteString(key)
+			b.WriteString("=")
+
+			switch val := e.Payload[key].(type) {
+			case string:
+				appendStringValue(&b, val)
+			case bool:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendBool(scratch[:0], val))
+			case int:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int32:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+			case int64:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendInt(scratch[:0], val, 10))
+			case float32:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+			case float64:
+				scratch := [64]byte{}
+
+				b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+			case fmt.Stringer:
+				appendStringValue(&b, val.String())
+			default:
+				appendStringValue(&b, fmt.Sprint(val))
+			}
+
+			b.WriteByte(' ')
 		}
-
-		if isCorrelationId && key == "correlationId" {
-			continue
-		}
-
-		if isHttpRequest && key == "httpRequest" {
-			continue
-		}
-
-		b.WriteString(key)
-		b.WriteString("=")
-
-		switch val := e.Payload[key].(type) {
-		case string:
-			appendStringValue(&b, val)
-		case bool:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendBool(scratch[:0], val))
-		case int:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int32:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-		case int64:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendInt(scratch[:0], val, 10))
-		case float32:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
-		case float64:
-			scratch := [64]byte{}
-
-			b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
-		case fmt.Stringer:
-			appendStringValue(&b, val.String())
-		default:
-			appendStringValue(&b, fmt.Sprint(val))
-		}
-
-		b.WriteByte(' ')
 	}
 
 	// last space
