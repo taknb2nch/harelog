@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"os"
 	"reflect"
@@ -418,32 +419,26 @@ func (l *Logger) Clone() *Logger {
 		out:                l.out,
 		trace:              l.trace,
 		spanId:             l.spanId,
-		traceSampled:       l.traceSampled,
 		logLevel:           l.logLevel,
 		prefix:             l.prefix,
 		correlationID:      l.correlationID,
 		projectID:          l.projectID,
-		labels:             make(map[string]string),
-		payload:            make(map[string]interface{}),
 		traceContextKey:    l.traceContextKey,
 		sourceLocationMode: l.sourceLocationMode,
 		formatter:          l.formatter,
 		hooks:              l.hooks,
-		hooksByLevel:       make(map[LogLevel][]Hook),
 		hookChan:           l.hookChan,
 	}
 
-	for k, v := range l.labels {
-		newLogger.labels[k] = v
+	if l.traceSampled != nil {
+		v := *l.traceSampled
+
+		newLogger.traceSampled = &v
 	}
 
-	for k, v := range l.payload {
-		newLogger.payload[k] = v
-	}
-
-	for k, v := range l.hooksByLevel {
-		newLogger.hooksByLevel[k] = v
-	}
+	newLogger.labels = maps.Clone(l.labels)
+	newLogger.payload = maps.Clone(l.payload)
+	newLogger.hooksByLevel = maps.Clone(l.hooksByLevel)
 
 	return newLogger
 }
