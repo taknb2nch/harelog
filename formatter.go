@@ -68,12 +68,21 @@ type Formatter interface {
 	FormatMessageOnly(entry *LogEntry) ([]byte, error)
 }
 
+var JSON = jsonOptions{}
+
+type jsonOptions struct{}
+
+// NewJSONFormatter creates a new JSONFormatter.
+func (jsonOptions) NewFormatter() *jsonFormatter {
+	return &jsonFormatter{}
+}
+
 // jsonFormatter formats log entries as JSON.
 type jsonFormatter struct{}
 
-// NewJSONFormatter creates a new JSONFormatter.
+// Deprecated: Use harelog.JSON.NewFormatter instead.
 func NewJSONFormatter() *jsonFormatter {
-	return &jsonFormatter{}
+	return JSON.NewFormatter()
 }
 
 // Format converts a logEntry to JSON format.
@@ -137,12 +146,21 @@ func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+var Text = textOptions{}
+
+type textOptions struct{}
+
+// NewTextFormatter creates a new TextFormatter.
+func (textOptions) NewFormatter() *textFormatter {
+	return &textFormatter{}
+}
+
 // textFormatter formats log entries as human-readable text.
 type textFormatter struct{}
 
-// NewTextFormatter creates a new TextFormatter.
+// Deprecated: Use harelog.Text.NewFormatter instead.
 func NewTextFormatter() *textFormatter {
-	return &textFormatter{}
+	return Text.NewFormatter()
 }
 
 // Format converts a logEntry to a single-line text format.
@@ -424,19 +442,12 @@ const (
 	AttrUnderline
 )
 
-// consoleFormatter provides a rich, developer-focused text format.
-// It supports highlighting specific key-value pairs to improve readability.
-type consoleFormatter struct {
-	enableColor      bool
-	isEnableColorSet bool
-	highlightColors  map[string]*color.Color
-}
+var Console = consoleOptions{}
 
-// ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
-type ConsoleFormatterOption func(*consoleFormatter)
+type consoleOptions struct{}
 
 // NewConsoleFormatter creates a new ConsoleFormatter.
-func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
+func (consoleOptions) NewFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	formatter := &consoleFormatter{
 		enableColor:      false,
 		isEnableColorSet: false,
@@ -451,7 +462,7 @@ func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 }
 
 // WithLogLevelColor is an option to enable or disable log level color output for the ConsoleFormatter.
-func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
+func (consoleOptions) WithLogLevelColor(enabled bool) ConsoleFormatterOption {
 	return func(f *consoleFormatter) {
 		f.enableColor = enabled
 		f.isEnableColorSet = true
@@ -462,7 +473,7 @@ func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
 // highlighting for a specific key. This option can be passed multiple times.
 // - Color attributes (Fg...): The last one specified wins.
 // - Style attributes (Attr...): All specified styles are applied.
-func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
+func (consoleOptions) WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
 	return func(f *consoleFormatter) {
 		var colorAttr color.Attribute
 		isColorSet := false
@@ -492,6 +503,32 @@ func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOptio
 
 		f.highlightColors[key] = color.New(finalAttrs...)
 	}
+}
+
+// consoleFormatter provides a rich, developer-focused text format.
+// It supports highlighting specific key-value pairs to improve readability.
+type consoleFormatter struct {
+	enableColor      bool
+	isEnableColorSet bool
+	highlightColors  map[string]*color.Color
+}
+
+// ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
+type ConsoleFormatterOption func(*consoleFormatter)
+
+// Deprecated: Use harelog.Console.NewFormatter instead.
+func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
+	return Console.NewFormatter(opts...)
+}
+
+// Deprecated: Use harelog.Console.WithLogLevelColor instead.
+func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
+	return Console.WithLogLevelColor(enabled)
+}
+
+// Deprecated: Use harelog.Console.WithKeyHighlight instead.
+func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
+	return Console.WithKeyHighlight(key, attrs...)
 }
 
 // Format overrides the default TextFormatter's field formatting to add highlighting.
@@ -810,15 +847,24 @@ func appendStringValue(b *bytes.Buffer, value string) {
 	}
 }
 
+var Logfmt = logfmtOptions{}
+
+type logfmtOptions struct{}
+
+// NewLogfmtFormatter creates a new LogfmtFormatter.
+func (logfmtOptions) NewFormatter() *logfmtFormatter {
+	return &logfmtFormatter{}
+}
+
 // logfmtFormatter formats log entries into the logfmt key=value format.
 //
 // This format consists of space-separated key=value pairs.
 // Values containing spaces, '=', or '"' characters will be double-quoted.
 type logfmtFormatter struct{}
 
-// NewLogfmtFormatter creates a new LogfmtFormatter.
+// Deprecated: Use harelog.Logfmt.NewFormatter instead.
 func NewLogfmtFormatter() *logfmtFormatter {
-	return &logfmtFormatter{}
+	return Logfmt.NewFormatter()
 }
 
 // Format converts a logEntry into a byte slice formatted as logfmt.
