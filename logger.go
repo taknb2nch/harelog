@@ -294,7 +294,7 @@ func New(opts ...Option) *Logger {
 		payload:            make(map[string]interface{}),
 		traceContextKey:    nil,
 		sourceLocationMode: SourceLocationModeNever,
-		formatter:          NewJSONFormatter(),
+		formatter:          JSON.NewFormatter(),
 		hookBufferSize:     100,
 	}
 

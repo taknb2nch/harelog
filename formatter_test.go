@@ -13,7 +13,7 @@ import (
 func TestJSONFormatter_Format(t *testing.T) {
 	t.Parallel()
 
-	f := NewJSONFormatter()
+	f := JSON.NewFormatter()
 	testTime := time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC)
 
 	entry := &LogEntry{
@@ -50,7 +50,7 @@ func TestJSONFormatter_Format(t *testing.T) {
 func TestJSONFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewJSONFormatter()
+	f := JSON.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 0, 0, 0, time.UTC)
 	testKey := "invalid key"
 	testType := "label"
@@ -83,7 +83,7 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
-		f := NewTextFormatter()
+		f := Text.NewFormatter()
 
 		tests := []struct {
 			name     string
@@ -211,7 +211,7 @@ func TestTextFormatter_Format(t *testing.T) {
 func TestTextFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewTextFormatter()
+	f := Text.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 5, 0, 0, time.UTC)
 	testKey := "key=invalid"
 	testType := "field"
@@ -268,7 +268,7 @@ func TestConsoleFormatter(t *testing.T) {
 		t.Run("WithColor(true) enables color", func(t *testing.T) {
 			t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-			f := NewConsoleFormatter(WithLogLevelColor(true))
+			f := Console.NewFormatter(Console.WithLogLevelColor(true))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -285,7 +285,7 @@ func TestConsoleFormatter(t *testing.T) {
 		t.Run("WithColor(false) disables color", func(t *testing.T) {
 			t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-			f := NewConsoleFormatter(WithLogLevelColor(false))
+			f := Console.NewFormatter(Console.WithLogLevelColor(false))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -304,7 +304,7 @@ func TestConsoleFormatter(t *testing.T) {
 			// IMPORTANT: Intended for non-TTY environments
 			t.Setenv("HARELOG_NO_COLOR", "1")
 
-			f := NewConsoleFormatter() // No options provided
+			f := Console.NewFormatter() // No options provided
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -317,9 +317,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Basic Highlighting", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgCyan),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgCyan),
 		)
 
 		b, err := f.Format(entry)
@@ -353,9 +353,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Highlight with Style", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgCyan, AttrBold),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
 		b, err := f.Format(entry)
@@ -382,9 +382,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Last Color Wins", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
 		)
 
 		b, err := f.Format(entry)
@@ -411,9 +411,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Styles are Additive", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", AttrBold, AttrUnderline),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", AttrBold, AttrUnderline),
 		)
 
 		b, err := f.Format(entry)
@@ -440,10 +440,10 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Last Key Config Overwrites", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
-			WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
+			Console.WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
 		)
 
 		b, err := f.Format(entry)
@@ -470,9 +470,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Color Disabled (LogLevel=false, Highlight=true)", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(false), // Explicitly disable log level color
-			WithKeyHighlight("userID", FgCyan, AttrBold),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(false), // Explicitly disable log level color
+			Console.WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
 		b, err := f.Format(entry)
@@ -504,11 +504,11 @@ func TestConsoleFormatter(t *testing.T) {
 		// This test remains unchanged
 		defer func() {
 			if r := recover(); r == nil {
-				t.Error("expected NewConsoleFormatter to panic with invalid ColorAttribute, but it did not")
+				t.Error("expected Console.NewFormatter to panic with invalid ColorAttribute, but it did not")
 			}
 		}()
 		// This should panic because 99 is not a valid ColorAttribute
-		_ = NewConsoleFormatter(WithKeyHighlight("userID", ColorAttribute(99)))
+		_ = Console.NewFormatter(Console.WithKeyHighlight("userID", ColorAttribute(99)))
 	})
 }
 
@@ -516,7 +516,7 @@ func TestConsoleFormatter(t *testing.T) {
 func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewConsoleFormatter() // Use default (no color in test env)
+	f := Console.NewFormatter() // Use default (no color in test env)
 	testTime := time.Date(2025, 10, 28, 17, 10, 0, 0, time.UTC)
 	testKey := "key\"invalid"
 	testType := "label"
@@ -552,8 +552,8 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
 	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
 
-	// NewLogfmtFormatter() は、logfmt_formatter.go で実装されることを想定
-	f := NewLogfmtFormatter()
+	// Logfmt.NewFormatter() は、logfmt_formatter.go で実装されることを想定
+	f := Logfmt.NewFormatter()
 
 	tests := []struct {
 		name     string
@@ -678,7 +678,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 15, 0, 0, time.UTC)
 	testKey := "key=invalid"
 	testType := "field"
@@ -756,7 +756,7 @@ var benchmarkEntryComplex = &LogEntry{
 
 // BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkTextFormatter_Simple(b *testing.B) {
-	f := NewTextFormatter()
+	f := Text.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -767,7 +767,7 @@ func BenchmarkTextFormatter_Simple(b *testing.B) {
 
 // BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry.
 func BenchmarkTextFormatter_Complex(b *testing.B) {
-	f := NewTextFormatter()
+	f := Text.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -797,7 +797,7 @@ func BenchmarkJsonFormatter_Complex(b *testing.B) {
 
 // BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
 func BenchmarkConsoleFormatter_Simple(b *testing.B) {
-	f := NewConsoleFormatter()
+	f := Console.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -809,10 +809,10 @@ func BenchmarkConsoleFormatter_Simple(b *testing.B) {
 func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 	// Highlight options are retained as they are a valid
 	// part of the ConsoleFormatter's complex use case.
-	f := NewConsoleFormatter(
-		WithLogLevelColor(true),
-		WithKeyHighlight("userID", FgCyan),
-		WithKeyHighlight("dept", FgMagenta, AttrBold),
+	f := Console.NewFormatter(
+		Console.WithLogLevelColor(true),
+		Console.WithKeyHighlight("userID", FgCyan),
+		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
 	)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -823,7 +823,7 @@ func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 
 // BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -833,7 +833,7 @@ func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
 
 // BenchmarkLogfmtFormatter_Complex benchmarks formatting a complex log entry.
 func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

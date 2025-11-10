@@ -35,7 +35,7 @@ func main() {
 	// 2. Create a new logger and register the hook using the WithHooks option.
 	// We use the TextFormatter for clear, human-readable output.
 	logger := harelog.New(
-		harelog.WithFormatter(harelog.NewTextFormatter()),
+		harelog.WithFormatter(harelog.Text.NewFormatter()),
 		harelog.WithHooks(myHook),
 	)
 
