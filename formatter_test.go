@@ -1244,7 +1244,93 @@ var benchmarkEntryComplex = &LogEntry{
 	},
 }
 
+// benchmarkEntryComplexMasking is a shared, complex log entry for "Masking" benchmarks.
+// Its content is identical to benchmarkEntryComplex to ensure a fair comparison
+// of performance with and without masking enabled.
+var benchmarkEntryComplexMasking = &LogEntry{
+	Message:        "complex event masking", // Changed message for clarity
+	Severity:       LogLevelWarn,
+	Time:           benchmarkTime,
+	Trace:          "trace-id-123",
+	SpanID:         "span-id-456",
+	CorrelationID:  "corr-id-789",
+	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
+	SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+	HTTPRequest: &HTTPRequest{
+		RequestMethod: "POST",
+		Status:        401,
+		RequestURL:    "/api/v1/login",
+	},
+	Payload: map[string]interface{}{
+		"userID": "user-abc",
+		"dept":   "eng department",
+		"rate":   123.45,
+		"active": true,
+		"count":  int64(99),
+	},
+}
+
+func cloneEntry(e *LogEntry) *LogEntry {
+	clone := *e // ポインタをコピー
+
+	// map は参照型なので、明示的にコピーする
+	if e.Labels != nil {
+		clone.Labels = make(map[string]string, len(e.Labels))
+		for k, v := range e.Labels {
+			clone.Labels[k] = v
+		}
+	}
+	if e.Payload != nil {
+		clone.Payload = make(map[string]interface{}, len(e.Payload))
+		for k, v := range e.Payload {
+			clone.Payload[k] = v
+		}
+	}
+
+	// Note: HTTPRequest や SourceLocation もポインタ型ですが、
+	// Format 内で変更されない（読み取り専用である）ため、
+	// このベンチマークの目的においてはシャローコピーのままで問題ありません。
+
+	return &clone
+}
+
 // --- Benchmarks ---
+
+// BenchmarkJsonFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkJsonFormatter_Simple(b *testing.B) {
+	f := &jsonFormatter{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
+	}
+}
+
+// BenchmarkJsonFormatter_Complex benchmarks formatting a complex log entry.
+func BenchmarkJsonFormatter_Complex(b *testing.B) {
+	f := &jsonFormatter{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkJSONFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkJSONFormatter_Complex_Masking(b *testing.B) {
+	f := JSON.NewFormatter(
+		JSON.WithMaskingKeys("userID"),
+		JSON.WithMaskingKeysIgnoreCase("DEPT"),
+		JSON.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
+	}
+}
 
 // BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkTextFormatter_Simple(b *testing.B) {
@@ -1267,23 +1353,19 @@ func BenchmarkTextFormatter_Complex(b *testing.B) {
 	}
 }
 
-// BenchmarkJsonFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkJsonFormatter_Simple(b *testing.B) {
-	f := &jsonFormatter{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
+// BenchmarkTextFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkTextFormatter_Complex_Masking(b *testing.B) {
+	f := Text.NewFormatter(
+		Text.WithMaskingKeys("userID"),
+		Text.WithMaskingKeysIgnoreCase("DEPT"),
+		Text.WithMaskingKeysIgnoreCase("region"),
+	)
 
-// BenchmarkJsonFormatter_Complex benchmarks formatting a complex log entry.
-func BenchmarkJsonFormatter_Complex(b *testing.B) {
-	f := &jsonFormatter{}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
 
@@ -1313,6 +1395,25 @@ func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 	}
 }
 
+// BenchmarkConsoleFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkConsoleFormatter_Complex_Masking(b *testing.B) {
+	f := Console.NewFormatter(
+		Console.WithLogLevelColor(true),
+		Console.WithKeyHighlight("userID", FgCyan),
+		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
+		Console.WithMaskingKeys("userID"),
+		Console.WithMaskingKeysIgnoreCase("DEPT"),
+		Console.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
+	}
+}
+
 // BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
 	f := Logfmt.NewFormatter()
@@ -1330,5 +1431,21 @@ func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkLogfmtFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
+	f := Logfmt.NewFormatter(
+		Logfmt.WithMaskingKeys("userID"),
+		Logfmt.WithMaskingKeysIgnoreCase("DEPT"),
+		Logfmt.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
