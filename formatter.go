@@ -15,6 +15,14 @@ import (
 	isatty "github.com/mattn/go-isatty"
 )
 
+const (
+	maskedValueString string = "[MASKED]"
+)
+
+var (
+	maskedValueBytes []byte = []byte(maskedValueString)
+)
+
 // levelColorMap maps log levels to their corresponding color functions.
 // This is a private implementation detail of the textFormatter.
 var levelColorMap = map[LogLevel]*color.Color{
@@ -70,15 +78,40 @@ type Formatter interface {
 
 var JSON = jsonOptions{}
 
+type JSONFormatterOption func(f *jsonFormatter)
+
 type jsonOptions struct{}
 
+// WithMaskingKeys sets the keys for masking in JSONFormatter.
+func (jsonOptions) WithMaskingKeys(keys ...string) JSONFormatterOption {
+	return func(f *jsonFormatter) {
+		f.addSensitive(keys...)
+	}
+}
+
+// WithMaskingKeysIgnoreCase sets the keys for masking in JSONFormatter,
+// ignoring case.
+func (jsonOptions) WithMaskingKeysIgnoreCase(keys ...string) JSONFormatterOption {
+	return func(f *jsonFormatter) {
+		f.addInsensitive(keys...)
+	}
+}
+
 // NewJSONFormatter creates a new JSONFormatter.
-func (jsonOptions) NewFormatter() *jsonFormatter {
-	return &jsonFormatter{}
+func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
+	formatter := &jsonFormatter{}
+
+	for _, opt := range opts {
+		opt(formatter)
+	}
+
+	return formatter
 }
 
 // jsonFormatter formats log entries as JSON.
-type jsonFormatter struct{}
+type jsonFormatter struct {
+	maskingCore
+}
 
 // Deprecated: Use harelog.JSON.NewFormatter instead.
 func NewJSONFormatter() *jsonFormatter {
@@ -93,6 +126,18 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 		head.Clear()
 		jsonEntryPool.Put(head)
 	}()
+
+	for k := range e.Labels {
+		if f.isMasking(k) {
+			e.Labels[k] = maskedValueString
+		}
+	}
+
+	for k := range e.Payload {
+		if f.isMasking(k) {
+			e.Payload[k] = maskedValueString
+		}
+	}
 
 	head.Message = e.Message
 	head.Severity = e.Severity
@@ -148,15 +193,26 @@ func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 
 var Text = textOptions{}
 
+// TextFormatterOption is a functional option for configuring a TextFormatter.
+type TextFormatterOption func(*textFormatter)
+
 type textOptions struct{}
 
 // NewTextFormatter creates a new TextFormatter.
-func (textOptions) NewFormatter() *textFormatter {
-	return &textFormatter{}
+func (textOptions) NewFormatter(opts ...TextFormatterOption) *textFormatter {
+	formatter := &textFormatter{}
+
+	for _, opt := range opts {
+		opt(formatter)
+	}
+
+	return formatter
 }
 
 // textFormatter formats log entries as human-readable text.
-type textFormatter struct{}
+type textFormatter struct {
+	maskingCore
+}
 
 // Deprecated: Use harelog.Text.NewFormatter instead.
 func NewTextFormatter() *textFormatter {
@@ -301,7 +357,13 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 			b.WriteByte('.')
 			b.WriteString(key)
 			b.WriteByte('=')
-			appendStringValue(&b, e.Labels[key])
+
+			if f.isMasking(key) {
+				b.WriteString(maskedValueString)
+			} else {
+				appendStringValue(&b, e.Labels[key])
+			}
+
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -338,37 +400,41 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 			b.WriteString(key)
 			b.WriteString("=")
 
-			switch val := e.Payload[key].(type) {
-			case string:
-				appendStringValue(&b, val)
-			case bool:
-				scratch := [64]byte{}
+			if f.isMasking(key) {
+				b.WriteString(maskedValueString)
+			} else {
+				switch val := e.Payload[key].(type) {
+				case string:
+					appendStringValue(&b, val)
+				case bool:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendBool(scratch[:0], val))
-			case int:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendBool(scratch[:0], val))
+				case int:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-			case int32:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+				case int32:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-			case int64:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+				case int64:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], val, 10))
-			case float32:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], val, 10))
+				case float32:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
-			case float64:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+				case float64:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
-			case fmt.Stringer:
-				appendStringValue(&b, val.String())
-			default:
-				appendStringValue(&b, fmt.Sprint(val))
+					b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+				case fmt.Stringer:
+					appendStringValue(&b, val.String())
+				default:
+					appendStringValue(&b, fmt.Sprint(val))
+				}
 			}
 
 			b.WriteByte(',')
@@ -416,6 +482,21 @@ func formatBasicMessage(e *LogEntry) []byte {
 	b.WriteString(strings.TrimSuffix(e.Message, "\n"))
 
 	return b.Bytes()
+}
+
+// WithMaskingKeys sets the keys for masking in TextFormatter.
+func (textOptions) WithMaskingKeys(keys ...string) TextFormatterOption {
+	return func(f *textFormatter) {
+		f.addSensitive(keys...)
+	}
+}
+
+// WithMaskingKeysIgnoreCase sets the keys for masking in TextFormatter,
+// ignoring case.
+func (textOptions) WithMaskingKeysIgnoreCase(keys ...string) TextFormatterOption {
+	return func(f *textFormatter) {
+		f.addInsensitive(keys...)
+	}
 }
 
 // ColorAttribute defines a text attribute like color or style for the ConsoleFormatter.
@@ -505,9 +586,25 @@ func (consoleOptions) WithKeyHighlight(key string, attrs ...ColorAttribute) Cons
 	}
 }
 
+// WithMaskingKeys sets the keys for masking in ConsoleFormatter.
+func (consoleOptions) WithMaskingKeys(keys ...string) ConsoleFormatterOption {
+	return func(f *consoleFormatter) {
+		f.addSensitive(keys...)
+	}
+}
+
+// WithMaskingKeysIgnoreCase sets the keys for masking in ConsoleFormatter,
+// ignoring case.
+func (consoleOptions) WithMaskingKeysIgnoreCase(keys ...string) ConsoleFormatterOption {
+	return func(f *consoleFormatter) {
+		f.addInsensitive(keys...)
+	}
+}
+
 // consoleFormatter provides a rich, developer-focused text format.
 // It supports highlighting specific key-value pairs to improve readability.
 type consoleFormatter struct {
+	maskingCore
 	enableColor      bool
 	isEnableColorSet bool
 	highlightColors  map[string]*color.Color
@@ -686,7 +783,13 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 			b.WriteByte('.')
 			b.WriteString(key)
 			b.WriteByte('=')
-			appendStringValue(&b, e.Labels[key])
+
+			if f.isMasking(key) {
+				b.WriteString(maskedValueString)
+			} else {
+				appendStringValue(&b, e.Labels[key])
+			}
+
 			b.WriteByte(',')
 			b.WriteByte(' ')
 
@@ -759,14 +862,22 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 			}
 
 			//-----
+			var b3 []byte
+
+			if f.isMasking(key) {
+				b3 = maskedValueBytes
+			} else {
+				b3 = b2.Bytes()
+			}
+
 			if c, ok := f.highlightColors[key]; ok && isUseColor {
 				c.EnableColor()
 
-				b.WriteString(c.Sprintf("%s=%s", key, b2.Bytes()))
+				b.WriteString(c.Sprintf("%s=%s", key, b3))
 			} else {
 				b.WriteString(key)
 				b.WriteByte('=')
-				b.Write(b2.Bytes())
+				b.Write(b3)
 			}
 			//-----
 
@@ -849,18 +960,43 @@ func appendStringValue(b *bytes.Buffer, value string) {
 
 var Logfmt = logfmtOptions{}
 
+type LogfmtFormatterOption func(f *logfmtFormatter)
+
 type logfmtOptions struct{}
 
+// WithMaskingKeys sets the keys for masking in LogfmtFormatter.
+func (logfmtOptions) WithMaskingKeys(keys ...string) LogfmtFormatterOption {
+	return func(f *logfmtFormatter) {
+		f.addSensitive(keys...)
+	}
+}
+
+// WithMaskingKeysIgnoreCase sets the keys for masking in LogfmtFormatter,
+// ignoring case.
+func (logfmtOptions) WithMaskingKeysIgnoreCase(keys ...string) LogfmtFormatterOption {
+	return func(f *logfmtFormatter) {
+		f.addInsensitive(keys...)
+	}
+}
+
 // NewLogfmtFormatter creates a new LogfmtFormatter.
-func (logfmtOptions) NewFormatter() *logfmtFormatter {
-	return &logfmtFormatter{}
+func (logfmtOptions) NewFormatter(opts ...LogfmtFormatterOption) *logfmtFormatter {
+	formatter := &logfmtFormatter{}
+
+	for _, opt := range opts {
+		opt(formatter)
+	}
+
+	return formatter
 }
 
 // logfmtFormatter formats log entries into the logfmt key=value format.
 //
 // This format consists of space-separated key=value pairs.
 // Values containing spaces, '=', or '"' characters will be double-quoted.
-type logfmtFormatter struct{}
+type logfmtFormatter struct {
+	maskingCore
+}
 
 // Deprecated: Use harelog.Logfmt.NewFormatter instead.
 func NewLogfmtFormatter() *logfmtFormatter {
@@ -992,7 +1128,13 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 			b.WriteByte('.')
 			b.WriteString(key)
 			b.WriteByte('=')
-			appendStringValue(&b, e.Labels[key])
+
+			if f.isMasking(key) {
+				b.WriteString(maskedValueString)
+			} else {
+				appendStringValue(&b, e.Labels[key])
+			}
+
 			b.WriteByte(' ')
 		}
 	}
@@ -1026,37 +1168,41 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 			b.WriteString(key)
 			b.WriteString("=")
 
-			switch val := e.Payload[key].(type) {
-			case string:
-				appendStringValue(&b, val)
-			case bool:
-				scratch := [64]byte{}
+			if f.isMasking(key) {
+				b.WriteString(maskedValueString)
+			} else {
+				switch val := e.Payload[key].(type) {
+				case string:
+					appendStringValue(&b, val)
+				case bool:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendBool(scratch[:0], val))
-			case int:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendBool(scratch[:0], val))
+				case int:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-			case int32:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+				case int32:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
-			case int64:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], int64(val), 10))
+				case int64:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendInt(scratch[:0], val, 10))
-			case float32:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendInt(scratch[:0], val, 10))
+				case float32:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
-			case float64:
-				scratch := [64]byte{}
+					b.Write(strconv.AppendFloat(scratch[:0], float64(val), 'f', -1, 64))
+				case float64:
+					scratch := [64]byte{}
 
-				b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
-			case fmt.Stringer:
-				appendStringValue(&b, val.String())
-			default:
-				appendStringValue(&b, fmt.Sprint(val))
+					b.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
+				case fmt.Stringer:
+					appendStringValue(&b, val.String())
+				default:
+					appendStringValue(&b, fmt.Sprint(val))
+				}
 			}
 
 			b.WriteByte(' ')
