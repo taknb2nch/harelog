@@ -10,16 +10,16 @@ import (
 func main() {
 	// 1. Create a new ConsoleFormatter with custom highlight rules.
 	// The API is designed to be intuitive and type-safe, using functional options.
-	formatter := harelog.NewConsoleFormatter(
+	formatter := harelog.Console.NewFormatter(
 		// Enable log level coloring (e.g., INFO in green, ERROR in red).
-		harelog.WithLogLevelColor(true),
+		harelog.Console.WithLogLevelColor(true),
 
 		// Define highlight rules for specific keys.
 		// You can chain as many WithKeyHighlight options as you need.
-		harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
-		harelog.WithKeyHighlight("requestID", harelog.FgMagenta),
-		harelog.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
-		harelog.WithKeyHighlight("status", harelog.FgGreen),
+		harelog.Console.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
+		harelog.Console.WithKeyHighlight("requestID", harelog.FgMagenta),
+		harelog.Console.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
+		harelog.Console.WithKeyHighlight("status", harelog.FgGreen),
 	)
 
 	// 2. Create a new logger with our custom formatter.

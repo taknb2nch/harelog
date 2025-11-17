@@ -13,7 +13,7 @@ import (
 func TestJSONFormatter_Format(t *testing.T) {
 	t.Parallel()
 
-	f := NewJSONFormatter()
+	f := JSON.NewFormatter()
 	testTime := time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC)
 
 	entry := &LogEntry{
@@ -50,7 +50,7 @@ func TestJSONFormatter_Format(t *testing.T) {
 func TestJSONFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewJSONFormatter()
+	f := JSON.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 0, 0, 0, time.UTC)
 	testKey := "invalid key"
 	testType := "label"
@@ -76,6 +76,129 @@ func TestJSONFormatter_FormatMessageOnly(t *testing.T) {
 	}
 }
 
+func TestJSONFormatter_Masking(t *testing.T) {
+	t.Parallel()
+
+	baseEntry := &LogEntry{
+		Message:  "masking test",
+		Severity: LogLevelInfo,
+		Time:     time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC),
+		Labels: map[string]string{
+			"trace_id": "abc-123",
+			"API_KEY":  "secret-key-1",
+		},
+		Payload: map[string]interface{}{
+			"user":     "gopher",
+			"password": "secret-pass-2",
+			"token":    "secret-token-3",
+		},
+	}
+
+	cloneEntry := func(e *LogEntry) *LogEntry {
+		clone := *e
+
+		if e.Labels != nil {
+			clone.Labels = make(map[string]string, len(e.Labels))
+			for k, v := range e.Labels {
+				clone.Labels[k] = v
+			}
+		}
+
+		if e.Payload != nil {
+			clone.Payload = make(map[string]interface{}, len(e.Payload))
+			for k, v := range e.Payload {
+				clone.Payload[k] = v
+			}
+		}
+
+		return &clone
+	}
+
+	var tests = []struct {
+		name          string
+		options       []JSONFormatterOption
+		wantMasked    []string
+		wantNotMasked []string
+	}{
+		{
+			name: "Case-Sensitive: masks 'password' and 'trace_id'",
+			options: []JSONFormatterOption{
+				JSON.WithMaskingKeys("password", "trace_id"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`"password":"%s"`, maskedValueString),
+				fmt.Sprintf(`"trace_id":"%s"`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`"user":"gopher"`,
+				`"API_KEY":"secret-key-1"`,
+				`"token":"secret-token-3"`,
+			},
+		},
+		{
+			name: "Case-Insensitive: masks 'API_KEY' and 'token'",
+			options: []JSONFormatterOption{
+				JSON.WithMaskingKeysIgnoreCase("api_key", "TOKEN"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`"API_KEY":"%s"`, maskedValueString),
+				fmt.Sprintf(`"token":"%s"`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`"user":"gopher"`,
+				`"password":"secret-pass-2"`,
+				`"trace_id":"abc-123"`,
+			},
+		},
+		{
+			name: "Combined: Sensitive 'password', Insensitive 'api_key'",
+			options: []JSONFormatterOption{
+				JSON.WithMaskingKeys("password"),
+				JSON.WithMaskingKeysIgnoreCase("api_key"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`"password":"%s"`, maskedValueString),
+				fmt.Sprintf(`"API_KEY":"%s"`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`"user":"gopher"`,
+				`"token":"secret-token-3"`,
+				`"trace_id":"abc-123"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry := cloneEntry(baseEntry)
+
+			f := JSON.NewFormatter(tt.options...)
+			b, err := f.Format(entry)
+			if err != nil {
+				t.Fatalf("Format() returned an error: %v", err)
+			}
+			s := string(b)
+
+			// Check for masked values
+			for _, want := range tt.wantMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing masked pair %q: %s", want, s)
+				}
+			}
+
+			// Check for unmasked values
+			for _, want := range tt.wantNotMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing unmasked pair %q: %s", want, s)
+				}
+			}
+		})
+	}
+}
+
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -83,7 +206,7 @@ func TestTextFormatter_Format(t *testing.T) {
 
 	// --- Subtest for basic formatting (ensuring it's uncolored) ---
 	t.Run("Basic structure and payload formatting is correct", func(t *testing.T) {
-		f := NewTextFormatter()
+		f := Text.NewFormatter()
 
 		tests := []struct {
 			name     string
@@ -211,7 +334,7 @@ func TestTextFormatter_Format(t *testing.T) {
 func TestTextFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewTextFormatter()
+	f := Text.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 5, 0, 0, time.UTC)
 	testKey := "key=invalid"
 	testType := "field"
@@ -234,6 +357,129 @@ func TestTextFormatter_FormatMessageOnly(t *testing.T) {
 
 	if got != expected {
 		t.Errorf("unexpected text output for FormatMessageOnly:\ngot:  %s\nwant: %s", got, expected)
+	}
+}
+
+func TestTextFormatter_Masking(t *testing.T) {
+	t.Parallel()
+
+	baseEntry := &LogEntry{
+		Message:  "masking test",
+		Severity: LogLevelInfo,
+		Time:     time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC),
+		Labels: map[string]string{
+			"trace_id": "abc-123",
+			"API_KEY":  "secret-key-1",
+		},
+		Payload: map[string]interface{}{
+			"user":     "gopher",
+			"password": "secret-pass-2",
+			"token":    "secret-token-3",
+		},
+	}
+
+	cloneEntry := func(e *LogEntry) *LogEntry {
+		clone := *e
+
+		if e.Labels != nil {
+			clone.Labels = make(map[string]string, len(e.Labels))
+			for k, v := range e.Labels {
+				clone.Labels[k] = v
+			}
+		}
+
+		if e.Payload != nil {
+			clone.Payload = make(map[string]interface{}, len(e.Payload))
+			for k, v := range e.Payload {
+				clone.Payload[k] = v
+			}
+		}
+
+		return &clone
+	}
+
+	var tests = []struct {
+		name          string
+		options       []TextFormatterOption
+		wantMasked    []string
+		wantNotMasked []string
+	}{
+		{
+			name: "Case-Sensitive: masks 'password' and 'trace_id'",
+			options: []TextFormatterOption{
+				Text.WithMaskingKeys("password", "trace_id"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`trace_id=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`API_KEY=secret-key-1`,
+				`token=secret-token-3`,
+			},
+		},
+		{
+			name: "Case-Insensitive: masks 'API_KEY' and 'token'",
+			options: []TextFormatterOption{
+				Text.WithMaskingKeysIgnoreCase("api_key", "TOKEN"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+				fmt.Sprintf(`token=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`password=secret-pass-2`,
+				`trace_id=abc-123`,
+			},
+		},
+		{
+			name: "Combined: Sensitive 'password', Insensitive 'api_key'",
+			options: []TextFormatterOption{
+				Text.WithMaskingKeys("password"),
+				Text.WithMaskingKeysIgnoreCase("api_key"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`token=secret-token-3`,
+				`trace_id=abc-123`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry := cloneEntry(baseEntry)
+
+			f := Text.NewFormatter(tt.options...)
+			b, err := f.Format(entry)
+			if err != nil {
+				t.Fatalf("Format() returned an error: %v", err)
+			}
+			s := string(b)
+
+			// Check for masked values
+			for _, want := range tt.wantMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing masked pair %q: %s", want, s)
+				}
+			}
+
+			// Check for unmasked values
+			for _, want := range tt.wantNotMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing unmasked pair %q: %s", want, s)
+				}
+			}
+		})
 	}
 }
 
@@ -268,7 +514,7 @@ func TestConsoleFormatter(t *testing.T) {
 		t.Run("WithColor(true) enables color", func(t *testing.T) {
 			t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-			f := NewConsoleFormatter(WithLogLevelColor(true))
+			f := Console.NewFormatter(Console.WithLogLevelColor(true))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -285,7 +531,7 @@ func TestConsoleFormatter(t *testing.T) {
 		t.Run("WithColor(false) disables color", func(t *testing.T) {
 			t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-			f := NewConsoleFormatter(WithLogLevelColor(false))
+			f := Console.NewFormatter(Console.WithLogLevelColor(false))
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -304,7 +550,7 @@ func TestConsoleFormatter(t *testing.T) {
 			// IMPORTANT: Intended for non-TTY environments
 			t.Setenv("HARELOG_NO_COLOR", "1")
 
-			f := NewConsoleFormatter() // No options provided
+			f := Console.NewFormatter() // No options provided
 			b, _ := f.Format(entry)
 			got := string(b)
 
@@ -317,9 +563,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Basic Highlighting", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgCyan),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgCyan),
 		)
 
 		b, err := f.Format(entry)
@@ -353,9 +599,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Highlight with Style", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgCyan, AttrBold),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
 		b, err := f.Format(entry)
@@ -382,9 +628,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Last Color Wins", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgRed, FgYellow), // Yellow should win
 		)
 
 		b, err := f.Format(entry)
@@ -411,9 +657,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Styles are Additive", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", AttrBold, AttrUnderline),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", AttrBold, AttrUnderline),
 		)
 
 		b, err := f.Format(entry)
@@ -440,10 +686,10 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Rule: Last Key Config Overwrites", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(true),
-			WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
-			WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(true),
+			Console.WithKeyHighlight("userID", FgRed, AttrBold),        // This should be overwritten
+			Console.WithKeyHighlight("userID", FgGreen, AttrUnderline), // This should be applied
 		)
 
 		b, err := f.Format(entry)
@@ -470,9 +716,9 @@ func TestConsoleFormatter(t *testing.T) {
 	t.Run("Color Disabled (LogLevel=false, Highlight=true)", func(t *testing.T) {
 		t.Setenv("HARELOG_FORCE_COLOR", "1")
 
-		f := NewConsoleFormatter(
-			WithLogLevelColor(false), // Explicitly disable log level color
-			WithKeyHighlight("userID", FgCyan, AttrBold),
+		f := Console.NewFormatter(
+			Console.WithLogLevelColor(false), // Explicitly disable log level color
+			Console.WithKeyHighlight("userID", FgCyan, AttrBold),
 		)
 
 		b, err := f.Format(entry)
@@ -504,11 +750,11 @@ func TestConsoleFormatter(t *testing.T) {
 		// This test remains unchanged
 		defer func() {
 			if r := recover(); r == nil {
-				t.Error("expected NewConsoleFormatter to panic with invalid ColorAttribute, but it did not")
+				t.Error("expected Console.NewFormatter to panic with invalid ColorAttribute, but it did not")
 			}
 		}()
 		// This should panic because 99 is not a valid ColorAttribute
-		_ = NewConsoleFormatter(WithKeyHighlight("userID", ColorAttribute(99)))
+		_ = Console.NewFormatter(Console.WithKeyHighlight("userID", ColorAttribute(99)))
 	})
 }
 
@@ -516,7 +762,7 @@ func TestConsoleFormatter(t *testing.T) {
 func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewConsoleFormatter() // Use default (no color in test env)
+	f := Console.NewFormatter() // Use default (no color in test env)
 	testTime := time.Date(2025, 10, 28, 17, 10, 0, 0, time.UTC)
 	testKey := "key\"invalid"
 	testType := "label"
@@ -547,13 +793,136 @@ func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
 	}
 }
 
+func TestConsoleFormatter_Masking(t *testing.T) {
+	t.Parallel()
+
+	baseEntry := &LogEntry{
+		Message:  "masking test",
+		Severity: LogLevelInfo,
+		Time:     time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC),
+		Labels: map[string]string{
+			"trace_id": "abc-123",
+			"API_KEY":  "secret-key-1",
+		},
+		Payload: map[string]interface{}{
+			"user":     "gopher",
+			"password": "secret-pass-2",
+			"token":    "secret-token-3",
+		},
+	}
+
+	cloneEntry := func(e *LogEntry) *LogEntry {
+		clone := *e
+
+		if e.Labels != nil {
+			clone.Labels = make(map[string]string, len(e.Labels))
+			for k, v := range e.Labels {
+				clone.Labels[k] = v
+			}
+		}
+
+		if e.Payload != nil {
+			clone.Payload = make(map[string]interface{}, len(e.Payload))
+			for k, v := range e.Payload {
+				clone.Payload[k] = v
+			}
+		}
+
+		return &clone
+	}
+
+	var tests = []struct {
+		name          string
+		options       []ConsoleFormatterOption
+		wantMasked    []string
+		wantNotMasked []string
+	}{
+		{
+			name: "Case-Sensitive: masks 'password' and 'trace_id'",
+			options: []ConsoleFormatterOption{
+				Console.WithMaskingKeys("password", "trace_id"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`trace_id=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`API_KEY=secret-key-1`,
+				`token=secret-token-3`,
+			},
+		},
+		{
+			name: "Case-Insensitive: masks 'API_KEY' and 'token'",
+			options: []ConsoleFormatterOption{
+				Console.WithMaskingKeysIgnoreCase("api_key", "TOKEN"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+				fmt.Sprintf(`token=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`password=secret-pass-2`,
+				`trace_id=abc-123`,
+			},
+		},
+		{
+			name: "Combined: Sensitive 'password', Insensitive 'api_key'",
+			options: []ConsoleFormatterOption{
+				Console.WithMaskingKeys("password"),
+				Console.WithMaskingKeysIgnoreCase("api_key"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`token=secret-token-3`,
+				`trace_id=abc-123`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry := cloneEntry(baseEntry)
+
+			f := Console.NewFormatter(tt.options...)
+			b, err := f.Format(entry)
+			if err != nil {
+				t.Fatalf("Format() returned an error: %v", err)
+			}
+			s := string(b)
+
+			// Check for masked values
+			for _, want := range tt.wantMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing masked pair %q: %s", want, s)
+				}
+			}
+
+			// Check for unmasked values
+			for _, want := range tt.wantNotMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing unmasked pair %q: %s", want, s)
+				}
+			}
+		})
+	}
+}
+
 // TestLogfmtFormatter_Format verifies the behavior of the logfmtFormatter.
 func TestLogfmtFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
 	testTime := time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
 
-	// NewLogfmtFormatter() は、logfmt_formatter.go で実装されることを想定
-	f := NewLogfmtFormatter()
+	// Logfmt.NewFormatter() は、logfmt_formatter.go で実装されることを想定
+	f := Logfmt.NewFormatter()
 
 	tests := []struct {
 		name     string
@@ -678,7 +1047,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
 	t.Parallel()
 
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	testTime := time.Date(2025, 10, 28, 17, 15, 0, 0, time.UTC)
 	testKey := "key=invalid"
 	testType := "field"
@@ -707,6 +1076,129 @@ func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
 	// Double-check that no ANSI escape codes are present (logfmt should never have color)
 	if strings.Contains(got, "\x1b") {
 		t.Errorf("FormatMessageOnly output for logfmt should not contain color codes, but got: %q", got)
+	}
+}
+
+func TestLogfmtFormatter_Masking(t *testing.T) {
+	t.Parallel()
+
+	baseEntry := &LogEntry{
+		Message:  "masking test",
+		Severity: LogLevelInfo,
+		Time:     time.Date(2025, 9, 25, 12, 0, 0, 0, time.UTC),
+		Labels: map[string]string{
+			"trace_id": "abc-123",
+			"API_KEY":  "secret-key-1",
+		},
+		Payload: map[string]interface{}{
+			"user":     "gopher",
+			"password": "secret-pass-2",
+			"token":    "secret-token-3",
+		},
+	}
+
+	cloneEntry := func(e *LogEntry) *LogEntry {
+		clone := *e
+
+		if e.Labels != nil {
+			clone.Labels = make(map[string]string, len(e.Labels))
+			for k, v := range e.Labels {
+				clone.Labels[k] = v
+			}
+		}
+
+		if e.Payload != nil {
+			clone.Payload = make(map[string]interface{}, len(e.Payload))
+			for k, v := range e.Payload {
+				clone.Payload[k] = v
+			}
+		}
+
+		return &clone
+	}
+
+	var tests = []struct {
+		name          string
+		options       []LogfmtFormatterOption
+		wantMasked    []string
+		wantNotMasked []string
+	}{
+		{
+			name: "Case-Sensitive: masks 'password' and 'trace_id'",
+			options: []LogfmtFormatterOption{
+				Logfmt.WithMaskingKeys("password", "trace_id"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`trace_id=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`API_KEY=secret-key-1`,
+				`token=secret-token-3`,
+			},
+		},
+		{
+			name: "Case-Insensitive: masks 'API_KEY' and 'token'",
+			options: []LogfmtFormatterOption{
+				Logfmt.WithMaskingKeysIgnoreCase("api_key", "TOKEN"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+				fmt.Sprintf(`token=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`password=secret-pass-2`,
+				`trace_id=abc-123`,
+			},
+		},
+		{
+			name: "Combined: Sensitive 'password', Insensitive 'api_key'",
+			options: []LogfmtFormatterOption{
+				Logfmt.WithMaskingKeys("password"),
+				Logfmt.WithMaskingKeysIgnoreCase("api_key"),
+			},
+			wantMasked: []string{
+				fmt.Sprintf(`password=%s`, maskedValueString),
+				fmt.Sprintf(`API_KEY=%s`, maskedValueString),
+			},
+			wantNotMasked: []string{
+				`user=gopher`,
+				`token=secret-token-3`,
+				`trace_id=abc-123`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry := cloneEntry(baseEntry)
+
+			f := Logfmt.NewFormatter(tt.options...)
+			b, err := f.Format(entry)
+			if err != nil {
+				t.Fatalf("Format() returned an error: %v", err)
+			}
+			s := string(b)
+
+			// Check for masked values
+			for _, want := range tt.wantMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing masked pair %q: %s", want, s)
+				}
+			}
+
+			// Check for unmasked values
+			for _, want := range tt.wantNotMasked {
+				if !strings.Contains(s, want) {
+					t.Errorf("output missing unmasked pair %q: %s", want, s)
+				}
+			}
+		})
 	}
 }
 
@@ -752,28 +1244,57 @@ var benchmarkEntryComplex = &LogEntry{
 	},
 }
 
+// benchmarkEntryComplexMasking is a shared, complex log entry for "Masking" benchmarks.
+// Its content is identical to benchmarkEntryComplex to ensure a fair comparison
+// of performance with and without masking enabled.
+var benchmarkEntryComplexMasking = &LogEntry{
+	Message:        "complex event masking", // Changed message for clarity
+	Severity:       LogLevelWarn,
+	Time:           benchmarkTime,
+	Trace:          "trace-id-123",
+	SpanID:         "span-id-456",
+	CorrelationID:  "corr-id-789",
+	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
+	SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
+	HTTPRequest: &HTTPRequest{
+		RequestMethod: "POST",
+		Status:        401,
+		RequestURL:    "/api/v1/login",
+	},
+	Payload: map[string]interface{}{
+		"userID": "user-abc",
+		"dept":   "eng department",
+		"rate":   123.45,
+		"active": true,
+		"count":  int64(99),
+	},
+}
+
+func cloneEntry(e *LogEntry) *LogEntry {
+	clone := *e // ポインタをコピー
+
+	// map は参照型なので、明示的にコピーする
+	if e.Labels != nil {
+		clone.Labels = make(map[string]string, len(e.Labels))
+		for k, v := range e.Labels {
+			clone.Labels[k] = v
+		}
+	}
+	if e.Payload != nil {
+		clone.Payload = make(map[string]interface{}, len(e.Payload))
+		for k, v := range e.Payload {
+			clone.Payload[k] = v
+		}
+	}
+
+	// Note: HTTPRequest や SourceLocation もポインタ型ですが、
+	// Format 内で変更されない（読み取り専用である）ため、
+	// このベンチマークの目的においてはシャローコピーのままで問題ありません。
+
+	return &clone
+}
+
 // --- Benchmarks ---
-
-// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkTextFormatter_Simple(b *testing.B) {
-	f := NewTextFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// The error is ignored in benchmarks as we test correctness in unit tests.
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
-
-// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry.
-func BenchmarkTextFormatter_Complex(b *testing.B) {
-	f := NewTextFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
-	}
-}
 
 // BenchmarkJsonFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkJsonFormatter_Simple(b *testing.B) {
@@ -795,9 +1316,62 @@ func BenchmarkJsonFormatter_Complex(b *testing.B) {
 	}
 }
 
+// BenchmarkJSONFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkJSONFormatter_Complex_Masking(b *testing.B) {
+	f := JSON.NewFormatter(
+		JSON.WithMaskingKeys("userID"),
+		JSON.WithMaskingKeysIgnoreCase("DEPT"),
+		JSON.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
+	}
+}
+
+// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
+func BenchmarkTextFormatter_Simple(b *testing.B) {
+	f := Text.NewFormatter()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// The error is ignored in benchmarks as we test correctness in unit tests.
+		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
+	}
+}
+
+// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry.
+func BenchmarkTextFormatter_Complex(b *testing.B) {
+	f := Text.NewFormatter()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkTextFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkTextFormatter_Complex_Masking(b *testing.B) {
+	f := Text.NewFormatter(
+		Text.WithMaskingKeys("userID"),
+		Text.WithMaskingKeysIgnoreCase("DEPT"),
+		Text.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
+	}
+}
+
 // BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
 func BenchmarkConsoleFormatter_Simple(b *testing.B) {
-	f := NewConsoleFormatter()
+	f := Console.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -809,10 +1383,10 @@ func BenchmarkConsoleFormatter_Simple(b *testing.B) {
 func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 	// Highlight options are retained as they are a valid
 	// part of the ConsoleFormatter's complex use case.
-	f := NewConsoleFormatter(
-		WithLogLevelColor(true),
-		WithKeyHighlight("userID", FgCyan),
-		WithKeyHighlight("dept", FgMagenta, AttrBold),
+	f := Console.NewFormatter(
+		Console.WithLogLevelColor(true),
+		Console.WithKeyHighlight("userID", FgCyan),
+		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
 	)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -821,9 +1395,28 @@ func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 	}
 }
 
+// BenchmarkConsoleFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkConsoleFormatter_Complex_Masking(b *testing.B) {
+	f := Console.NewFormatter(
+		Console.WithLogLevelColor(true),
+		Console.WithKeyHighlight("userID", FgCyan),
+		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
+		Console.WithMaskingKeys("userID"),
+		Console.WithMaskingKeysIgnoreCase("DEPT"),
+		Console.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
+	}
+}
+
 // BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
 func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -833,10 +1426,26 @@ func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
 
 // BenchmarkLogfmtFormatter_Complex benchmarks formatting a complex log entry.
 func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
-	f := NewLogfmtFormatter()
+	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
+	}
+}
+
+// BenchmarkLogfmtFormatter_Complex_Masking benchmarks a complex entry
+// with several masking rules enabled.
+func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
+	f := Logfmt.NewFormatter(
+		Logfmt.WithMaskingKeys("userID"),
+		Logfmt.WithMaskingKeysIgnoreCase("DEPT"),
+		Logfmt.WithMaskingKeysIgnoreCase("region"),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
