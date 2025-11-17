@@ -220,6 +220,36 @@ logger := harelog.New(
 
 ---
 
+### Masking Sensitive Data
+
+As a safety net, `harelog` formatters can be configured to automatically mask sensitive data found in `Labels` or `Payload` fields. This prevents accidental logging of passwords, API keys, or tokens.
+
+When masking is enabled, the formatter replaces the sensitive value with the fixed-string `[MASKED]`. This is provided as a "zero-cost" option, meaning there is no performance impact unless you explicitly enable it.
+
+```go
+// Configure a JSONFormatter to mask "password" (case-sensitive)
+// and "authorization" (case-insensitive).
+formatter := harelog.JSON.NewFormatter(
+	harelog.JSON.WithMaskingKeys("password"),
+	harelog.JSON.WithMaskingKeysIgnoreCase("Authorization"),
+)
+
+logger := harelog.New(harelog.WithFormatter(formatter))
+
+// The "password" value will be masked.
+logger.Infow("User login attempt",
+	"user", "admin",
+	"password", "secret-123", // This will be masked
+)
+
+// The "Authorization" header value will also be masked.
+logger.Infow("API request",
+	"Authorization", "Bearer xyz-token", // This will be masked
+)
+```
+
+---
+
 ## Extending with Hooks
 
 Hooks provide a powerful way to extend `harelog`'s functionality, turning it into a logging platform. You can use hooks to send log entries to external services like Sentry, Slack, or a custom database based on the log level.
