@@ -21,7 +21,7 @@ func main() {
 	println("NOTE: Run this in a terminal to see colors. Redirect to a file to disable them.")
 	// ---
 	textLogger := harelog.New(
-		harelog.WithFormatter(harelog.NewTextFormatter()),
+		harelog.WithFormatter(harelog.Text.NewFormatter()),
 	)
 
 	textLogger = textLogger.WithLogLevel(harelog.LogLevelAll)
@@ -47,7 +47,7 @@ func main() {
 	// ---
 	loggerTextWithSource := harelog.New(
 		harelog.WithAutoSource(harelog.SourceLocationModeAlways),
-		harelog.WithFormatter(harelog.NewTextFormatter()),
+		harelog.WithFormatter(harelog.Text.NewFormatter()),
 	)
 	// This log should contain the file and line number in a readable format.
 	loggerTextWithSource.Warnf("This text log should contain the source location.")
@@ -62,7 +62,7 @@ func main() {
 	// ---
 	println("\n--- 5. Testing Contextual Logger (With method) ---")
 	// ---
-	baseLogger := harelog.New(harelog.WithFormatter(harelog.NewTextFormatter()))
+	baseLogger := harelog.New(harelog.WithFormatter(harelog.Text.NewFormatter()))
 	// Create a child logger with request-specific context.
 	reqLogger := baseLogger.With("requestID", "abc-123", "user", "gopher")
 	reqLogger.Infow("Request processed.", "status", 200)

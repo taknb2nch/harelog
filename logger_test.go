@@ -172,7 +172,7 @@ func TestWithMethods(t *testing.T) {
 	t.Run("Invalid labels are ignored and warn", func(t *testing.T) {
 		var buf bytes.Buffer
 		// Use text formatter for easier stderr assertion
-		l1 := New(WithOutput(&buf), WithFormatter(NewTextFormatter()))
+		l1 := New(WithOutput(&buf), WithFormatter(Text.NewFormatter()))
 
 		// Capture stderr
 		stopCapture := captureStderr(t)
@@ -352,7 +352,7 @@ func TestWithMethod(t *testing.T) {
 	t.Run("Invalid keys are ignored and warn", func(t *testing.T) {
 		var buf bytes.Buffer
 		// Use text formatter for easier stderr assertion
-		l1 := New(WithOutput(&buf), WithFormatter(NewTextFormatter()))
+		l1 := New(WithOutput(&buf), WithFormatter(Text.NewFormatter()))
 
 		// Capture stderr
 		stopCapture := captureStderr(t)
@@ -517,7 +517,7 @@ func TestDefaultLogger(t *testing.T) {
 
 		buf := setup()
 		// Switch the default logger to use the text formatter
-		SetDefaultFormatter(NewTextFormatter())
+		SetDefaultFormatter(Text.NewFormatter())
 
 		Infow("text output test", "key", "value")
 
@@ -796,7 +796,7 @@ func TestFormatters(t *testing.T) {
 
 		logger := New(
 			WithOutput(&buf),
-			WithFormatter(NewTextFormatter()),
+			WithFormatter(Text.NewFormatter()),
 		)
 
 		// This call should now use the text formatter
@@ -925,7 +925,7 @@ func TestNew_WithOptions(t *testing.T) {
 		logger := New(
 			WithOutput(&buf),
 			WithLogLevel(LogLevelDebug),
-			WithFormatter(NewTextFormatter()),
+			WithFormatter(Text.NewFormatter()),
 			WithAutoSource(SourceLocationModeAlways),
 			WithProjectID("test-project"),
 			WithTraceContextKey("test-key"),
@@ -970,7 +970,7 @@ func TestNew_WithOptions(t *testing.T) {
 
 		logger := New(
 			WithOutput(&buf),
-			WithFormatter(NewTextFormatter()), // Use real text formatter
+			WithFormatter(Text.NewFormatter()), // Use real text formatter
 			WithLabels(map[string]string{
 				"valid_label":   "label1",
 				"invalid label": "label2",
@@ -1140,7 +1140,7 @@ func TestSetDefaultFunctions_API(t *testing.T) {
 		setup() // Reset std
 
 		// Set a specific formatter for this test to check stderr
-		SetDefaultFormatter(NewTextFormatter())
+		SetDefaultFormatter(Text.NewFormatter())
 
 		// Capture stderr
 		stopCapture := captureStderr(t)
@@ -1386,7 +1386,7 @@ func TestLogger_Hooks_PanicRecovery(t *testing.T) {
 	logger := New(
 		WithOutput(&buf),
 		WithHooks(hook),
-		WithFormatter(NewTextFormatter()),
+		WithFormatter(Text.NewFormatter()),
 	)
 	defer logger.Close()
 

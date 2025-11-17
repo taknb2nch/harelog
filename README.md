@@ -14,6 +14,24 @@ go get github.com/taknb2nch/harelog
 
 ## Usage
 
+### Deprecation Notice
+
+As of `v1.11.0`, the top-level constructor functions (e.g., `harelog.NewTextFormatter()`) have been **deprecated**.
+
+They will be removed in a future major version. Please migrate to the new namespaced API (`harelog.JSON`, `harelog.Text`, `harelog.Console`, and `harelog.Logfmt`) to ensure future compatibility and to access new features like masking.
+
+**Old (Deprecated):**
+```go
+// DEPRECATED
+fmt := harelog.NewTextFormatter()
+```
+
+**New (Recommended):**
+```go
+// RECOMMENDED
+fmt := harelog.Text.NewFormatter()
+```
+
 ### Basic & Structured Logging
 
 `harelog` provides familiar functions for different logging styles.
@@ -120,7 +138,7 @@ The `TextFormatter` provides a simple, plain-text, single-line output (e.g., `TI
 ```go
 // Use the WithFormatter option to switch to the plain text logger.
 logger := harelog.New(
-	harelog.WithFormatter(harelog.NewTextFormatter()),
+	harelog.WithFormatter(harelog.Text.NewFormatter()),
 )
 ```
 
@@ -131,24 +149,24 @@ The `LogfmtFormatter` is a high-performance, plain-text formatter that outputs l
 ```go
 // Use the LogfmtFormatter for structured key=value text output.
 logger := harelog.New(
-	harelog.WithFormatter(harelog.NewLogfmtFormatter()),
+	harelog.WithFormatter(harelog.Logfmt.NewFormatter()),
 )
 ```
 
 #### ConsoleFormatter (for Development)
 
-For the ultimate developer experience, the `ConsoleFormatter` extends the `TextFormatter` logic with **log level coloring** and the ability to **highlight specific key-value pairs**. This makes it incredibly easy to spot important information like a `userID` or `traceID` in a sea of logs.
+For the ultimate developer experience, the `ConsoleFormatter` is designed for human-readable output, especially during local development. While the `TextFormatter` provides standard key-value output, the `ConsoleFormatter` adds **log level coloring** and the ability to **highlight specific key-value pairs**. This makes it incredibly easy to spot important information like a `userID` or `traceID` in a sea of logs.
 
 ```go
 // Use the ConsoleFormatter to highlight important keys.
-formatter := harelog.NewConsoleFormatter(
+formatter := harelog.Console.NewFormatter(
 	// Enable coloring for log levels (e.g., [INFO] in green).
-	harelog.WithLogLevelColor(true),
+	harelog.Console.WithLogLevelColor(true),
 	
 	// Define your highlight rules.
-	harelog.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
-	harelog.WithKeyHighlight("requestID", harelog.FgMagenta),
-	harelog.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
+	harelog.Console.WithKeyHighlight("userID", harelog.FgCyan, harelog.AttrBold),
+	harelog.Console.WithKeyHighlight("requestID", harelog.FgMagenta),
+	harelog.Console.WithKeyHighlight("error", harelog.FgRed, harelog.AttrUnderline),
 )
 
 logger := harelog.New(harelog.WithFormatter(formatter))
@@ -197,6 +215,36 @@ const frameworkTraceKey = "x-cloud-trace-context"
 logger := harelog.New(
 	harelog.WithProjectID("my-gcp-project-id"),
 	harelog.WithTraceContextKey(frameworkTraceKey),
+)
+```
+
+---
+
+### Masking Sensitive Data
+
+As a safety net, `harelog` formatters can be configured to automatically mask sensitive data found in `Labels` or `Payload` fields. This prevents accidental logging of passwords, API keys, or tokens.
+
+When masking is enabled, the formatter replaces the sensitive value with the fixed-string `[MASKED]`. This is provided as a "zero-cost" option, meaning there is no performance impact unless you explicitly enable it.
+
+```go
+// Configure a JSONFormatter to mask "password" (case-sensitive)
+// and "authorization" (case-insensitive).
+formatter := harelog.JSON.NewFormatter(
+	harelog.JSON.WithMaskingKeys("password"),
+	harelog.JSON.WithMaskingKeysIgnoreCase("Authorization"),
+)
+
+logger := harelog.New(harelog.WithFormatter(formatter))
+
+// The "password" value will be masked.
+logger.Infow("User login attempt",
+	"user", "admin",
+	"password", "secret-123", // This will be masked
+)
+
+// The "Authorization" header value will also be masked.
+logger.Infow("API request",
+	"Authorization", "Bearer xyz-token", // This will be masked
 )
 ```
 
