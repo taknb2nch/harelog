@@ -847,6 +847,16 @@ func (l *Logger) findCaller() *SourceLocation {
 	return nil
 }
 
+// SetLogLevel dynamically updates the logger's log level.
+// This operation is thread-safe.
+func (l *Logger) SetLogLevel(level LogLevel) {
+	if _, ok := levelMap[level]; !ok {
+		panic(fmt.Sprintf("harelog: invalid log level provided to (*Logger).SetLogLevel: %q", level))
+	}
+
+	l.logLevel.Store(uint32(levelMap[level]))
+}
+
 // IsDebugEnabled checks if the Debug level is enabled for the logger.
 func (l *Logger) IsDebugEnabled() bool {
 	return l.logLevel.Load() >= uint32(logLevelValueDebug)

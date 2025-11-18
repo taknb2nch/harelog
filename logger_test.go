@@ -1644,3 +1644,84 @@ func captureStderr(t *testing.T) func() string {
 		return buf.String()
 	}
 }
+
+// TestLogger_SetLogLevel_Functional verifies that SetLogLevel correctly
+// changes the logger's behavior dynamically.
+func TestLogger_SetLogLevel_Functional(t *testing.T) {
+	// 1. Init logger at Info level
+	logger := New(WithLogLevel(LogLevelInfo))
+
+	// 2. Check initial state
+	if logger.IsDebugEnabled() {
+		t.Error("Initial state: expected IsDebugEnabled() to be false")
+	}
+	if !logger.IsInfoEnabled() {
+		t.Error("Initial state: expected IsInfoEnabled() to be true")
+	}
+
+	// 3. Change level to Debug
+	logger.SetLogLevel(LogLevelDebug)
+
+	// 4. Check state after Debug change
+	if !logger.IsDebugEnabled() {
+		t.Errorf("After SetLogLevel(Debug): expected IsDebugEnabled() to be true")
+	}
+	if !logger.IsInfoEnabled() {
+		t.Errorf("After SetLogLevel(Debug): expected IsInfoEnabled() to be true (Debug should also log Info)")
+	}
+
+	// 5. Change level to Warn
+	logger.SetLogLevel(LogLevelWarn)
+
+	// 6. Check state after Warn change
+	if logger.IsDebugEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsDebugEnabled() to be false")
+	}
+	if logger.IsInfoEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsInfoEnabled() to be false")
+	}
+	if !logger.IsWarnEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsWarnEnabled() to be true")
+	}
+}
+
+// TestLogger_SetLogLevel_Concurrency checks for data races when
+// SetLogLevel (write) and Is...Enabled (read) are called concurrently.
+//
+// This test is effective when run with the -race flag.
+func TestLogger_SetLogLevel_Concurrency(t *testing.T) {
+	t.Parallel()
+
+	logger := New(WithLogLevel(LogLevelInfo))
+	var wg sync.WaitGroup
+
+	// Start concurrent writers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 100; n++ {
+				logger.SetLogLevel(LogLevelDebug)
+				logger.SetLogLevel(LogLevelError)
+				logger.SetLogLevel(LogLevelInfo)
+			}
+		}()
+	}
+
+	// Start concurrent readers
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 100; n++ {
+				_ = logger.IsDebugEnabled()
+				_ = logger.IsInfoEnabled()
+				_ = logger.IsWarnEnabled()
+				_ = logger.IsErrorEnabled()
+			}
+		}()
+	}
+
+	wg.Wait()
+	// Test passes if `go test -race` reports no data race.
+}
