@@ -402,15 +402,8 @@ func (l *Logger) fireHooks(entry *LogEntry) {
 func (l *Logger) defensiveCopy(entry *LogEntry) *LogEntry {
 	entryCopy := *entry
 
-	if entry.Payload != nil {
-		payload := make(map[string]interface{}, len(entry.Payload))
-
-		for k, v := range entry.Payload {
-			payload[k] = v
-		}
-
-		entryCopy.Payload = payload
-	}
+	entryCopy.Labels = maps.Clone(entry.Labels)
+	entryCopy.Payload = maps.Clone(entry.Payload)
 
 	return &entryCopy
 }
@@ -1521,31 +1514,6 @@ func Close() error {
 
 	return std.Close()
 }
-
-// // isDebugEnabled returns
-// func isDebugEnabled(level logLevelValue) bool {
-// 	return level >= logLevelValueDebug
-// }
-
-// // isInfoEnabled returns
-// func isInfoEnabled(level logLevelValue) bool {
-// 	return level >= logLevelValueInfo
-// }
-
-// // isWarnEnabled returns
-// func isWarnEnabled(level logLevelValue) bool {
-// 	return level >= logLevelValueWarn
-// }
-
-// // isErrorEnabled returns
-// func isErrorEnabled(level logLevelValue) bool {
-// 	return level >= logLevelValueError
-// }
-
-// // isCriticalEnabled returns
-// func isCriticalEnabled(level logLevelValue) bool {
-// 	return level >= logLevelValueCritical
-// }
 
 // sprintMessage builds a string from a slice of interfaces, separated by spaces.
 func sprintMessage(v ...interface{}) string {
