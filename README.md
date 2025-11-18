@@ -178,6 +178,24 @@ logger.Errorw("Failed to connect to database",
 )
 ```
 
+### Dynamic Log Level Control
+
+You can dynamically change the logger's log level at runtime using the `SetLogLevel` method. This operation is thread-safe and allows you to increase or decrease log verbosity (e.g., for debugging) without restarting your application.
+
+```go
+// Start with INFO level
+logger := harelog.New(harelog.WithLogLevel(harelog.LogLevelInfo))
+
+// ... some time later, for debugging ...
+logger.Info("This log is visible.")
+logger.Debug("This log is NOT visible.")
+
+// Dynamically switch to DEBUG level
+logger.SetLogLevel(harelog.LogLevelDebug)
+
+logger.Debug("This log is NOW visible.")
+```
+
 ### Default Log Level via Environment Variable
 
 You can control the default logger's verbosity by setting the `HARELOG_LEVEL` environment variable.

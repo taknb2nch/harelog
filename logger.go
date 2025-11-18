@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,7 +33,7 @@ const (
 	LogLevelAll      LogLevel = "ALL"
 )
 
-type logLevelValue int
+type logLevelValue uint32
 
 const (
 	logLevelValueOff logLevelValue = iota
@@ -44,7 +45,7 @@ const (
 )
 
 const (
-	logLevelValueAll logLevelValue = math.MaxInt32
+	logLevelValueAll logLevelValue = math.MaxUint32
 )
 
 // sourceLocationMode defines the behavior for automatic source code location capturing.
@@ -256,7 +257,7 @@ type Logger struct {
 	spanId             string
 	traceSampled       *bool
 	labels             map[string]string
-	logLevel           logLevelValue
+	logLevel           atomic.Uint32
 	prefix             string
 	correlationID      string
 	projectID          string
@@ -286,7 +287,6 @@ func New(opts ...Option) *Logger {
 		trace:              "",
 		spanId:             "",
 		traceSampled:       nil,
-		logLevel:           logLevelValueInfo,
 		prefix:             "",
 		correlationID:      "",
 		projectID:          "",
@@ -297,6 +297,8 @@ func New(opts ...Option) *Logger {
 		formatter:          JSON.NewFormatter(),
 		hookBufferSize:     100,
 	}
+
+	logger.logLevel.Store(uint32(logLevelValueInfo))
 
 	for _, opt := range opts {
 		opt(logger)
@@ -383,7 +385,7 @@ func (l *Logger) fireHooks(entry *LogEntry) {
 					}
 
 					if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
-						(l.sourceLocationMode == SourceLocationModeErrorOrAbove && l.logLevel <= logLevelValueError)) {
+						(l.sourceLocationMode == SourceLocationModeErrorOrAbove && l.logLevel.Load() <= uint32(logLevelValueError))) {
 						e.SourceLocation = l.findCaller()
 					}
 
@@ -400,15 +402,8 @@ func (l *Logger) fireHooks(entry *LogEntry) {
 func (l *Logger) defensiveCopy(entry *LogEntry) *LogEntry {
 	entryCopy := *entry
 
-	if entry.Payload != nil {
-		payload := make(map[string]interface{}, len(entry.Payload))
-
-		for k, v := range entry.Payload {
-			payload[k] = v
-		}
-
-		entryCopy.Payload = payload
-	}
+	entryCopy.Labels = maps.Clone(entry.Labels)
+	entryCopy.Payload = maps.Clone(entry.Payload)
 
 	return &entryCopy
 }
@@ -419,7 +414,6 @@ func (l *Logger) Clone() *Logger {
 		out:                l.out,
 		trace:              l.trace,
 		spanId:             l.spanId,
-		logLevel:           l.logLevel,
 		prefix:             l.prefix,
 		correlationID:      l.correlationID,
 		projectID:          l.projectID,
@@ -429,6 +423,8 @@ func (l *Logger) Clone() *Logger {
 		hooks:              l.hooks,
 		hookChan:           l.hookChan,
 	}
+
+	newLogger.logLevel.Store(l.logLevel.Load())
 
 	if l.traceSampled != nil {
 		v := *l.traceSampled
@@ -844,29 +840,39 @@ func (l *Logger) findCaller() *SourceLocation {
 	return nil
 }
 
+// SetLogLevel dynamically updates the logger's log level.
+// This operation is thread-safe.
+func (l *Logger) SetLogLevel(level LogLevel) {
+	if _, ok := levelMap[level]; !ok {
+		panic(fmt.Sprintf("harelog: invalid log level provided to (*Logger).SetLogLevel: %q", level))
+	}
+
+	l.logLevel.Store(uint32(levelMap[level]))
+}
+
 // IsDebugEnabled checks if the Debug level is enabled for the logger.
 func (l *Logger) IsDebugEnabled() bool {
-	return isDebugEnabled(l.logLevel)
+	return l.logLevel.Load() >= uint32(logLevelValueDebug)
 }
 
 // IsInfoEnabled checks if the Info level is enabled for the logger.
 func (l *Logger) IsInfoEnabled() bool {
-	return isInfoEnabled(l.logLevel)
+	return l.logLevel.Load() >= uint32(logLevelValueInfo)
 }
 
 // IsWarnEnabled checks if the Warn level is enabled for the logger.
 func (l *Logger) IsWarnEnabled() bool {
-	return isWarnEnabled(l.logLevel)
+	return l.logLevel.Load() >= uint32(logLevelValueWarn)
 }
 
 // IsErrorEnabled checks if the Error level is enabled for the logger.
 func (l *Logger) IsErrorEnabled() bool {
-	return isErrorEnabled(l.logLevel)
+	return l.logLevel.Load() >= uint32(logLevelValueError)
 }
 
 // IsCriticalEnabled checks if the Critical level is enabled for the logger.
 func (l *Logger) IsCriticalEnabled() bool {
-	return isCriticalEnabled(l.logLevel)
+	return l.logLevel.Load() >= uint32(logLevelValueCritical)
 }
 
 // WithLogLevel returns a new logger instance with the specified log level.
@@ -876,7 +882,7 @@ func (l *Logger) WithLogLevel(level LogLevel) *Logger {
 	}
 
 	newLogger := l.Clone()
-	newLogger.logLevel = levelMap[level]
+	newLogger.logLevel.Store(uint32(levelMap[level]))
 
 	return newLogger
 }
@@ -1086,8 +1092,10 @@ func SetDefaultHooks(hooks ...Hook) {
 	// --- Preserve existing settings ---
 	// Find the current LogLevel string from the internal logLevelValue.
 	var currentLevel LogLevel = LogLevelInfo // Default fallback
+	stdLogLevel := std.logLevel.Load()
+
 	for l, v := range levelMap {
-		if v == std.logLevel {
+		if uint32(v) == stdLogLevel {
 			currentLevel = l
 			break
 		}
@@ -1166,41 +1174,26 @@ func RemoveDefaultLabels(keys ...string) {
 
 // IsDebugEnabled checks if the Debug level is enabled for the default logger.
 func IsDebugEnabled() bool {
-	stdMutex.RLock()
-	defer stdMutex.RUnlock()
-
 	return std.IsDebugEnabled()
 }
 
 // IsInfoEnabled checks if the Info level is enabled for the default logger.
 func IsInfoEnabled() bool {
-	stdMutex.RLock()
-	defer stdMutex.RUnlock()
-
 	return std.IsInfoEnabled()
 }
 
 // IsWarnEnabled checks if the Warn level is enabled for the default logger.
 func IsWarnEnabled() bool {
-	stdMutex.RLock()
-	defer stdMutex.RUnlock()
-
 	return std.IsWarnEnabled()
 }
 
 // IsErrorEnabled checks if the Error level is enabled for the default logger.
 func IsErrorEnabled() bool {
-	stdMutex.RLock()
-	defer stdMutex.RUnlock()
-
 	return std.IsErrorEnabled()
 }
 
 // IsCriticalEnabled checks if the Critical level is enabled for the default logger.
 func IsCriticalEnabled() bool {
-	stdMutex.RLock()
-	defer stdMutex.RUnlock()
-
 	return std.IsCriticalEnabled()
 }
 
@@ -1522,31 +1515,6 @@ func Close() error {
 	return std.Close()
 }
 
-// isDebugEnabled returns
-func isDebugEnabled(level logLevelValue) bool {
-	return level >= logLevelValueDebug
-}
-
-// isInfoEnabled returns
-func isInfoEnabled(level logLevelValue) bool {
-	return level >= logLevelValueInfo
-}
-
-// isWarnEnabled returns
-func isWarnEnabled(level logLevelValue) bool {
-	return level >= logLevelValueWarn
-}
-
-// isErrorEnabled returns
-func isErrorEnabled(level logLevelValue) bool {
-	return level >= logLevelValueError
-}
-
-// isCriticalEnabled returns
-func isCriticalEnabled(level logLevelValue) bool {
-	return level >= logLevelValueCritical
-}
-
 // sprintMessage builds a string from a slice of interfaces, separated by spaces.
 func sprintMessage(v ...interface{}) string {
 	var b strings.Builder
@@ -1577,7 +1545,7 @@ func WithLogLevel(level LogLevel) Option {
 			panic(fmt.Sprintf("harelog: invalid log level provided to WithLogLevel: %q", level))
 		}
 
-		l.logLevel = lv
+		l.logLevel.Store(uint32(lv))
 	}
 }
 

@@ -53,8 +53,11 @@ func TestNew(t *testing.T) {
 		if l.out != os.Stderr {
 			t.Errorf("expected default output to be os.Stderr, got %v", l.out)
 		}
-		if l.logLevel != logLevelValueInfo {
-			t.Errorf("expected default level to be Info, got %v", l.logLevel)
+
+		logLevel := l.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueInfo) {
+			t.Errorf("expected default level to be Info, got %v", logLevel)
 		}
 		if _, ok := l.formatter.(*jsonFormatter); !ok {
 			t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
@@ -71,8 +74,10 @@ func TestNew(t *testing.T) {
 			WithLogLevel(LogLevelDebug),
 		)
 
-		if logger.logLevel != logLevelValueDebug {
-			t.Errorf("expected log level to be DEBUG, but got %v", logger.logLevel)
+		logLevel := logger.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
+			t.Errorf("expected log level to be DEBUG, but got %v", logLevel)
 		}
 
 		// Verify that the level is applied correctly.
@@ -336,6 +341,7 @@ func TestWithMethod(t *testing.T) {
 			}
 		}()
 		logger := New()
+		//lint:ignore SA5012 "test of odd number of arguments"
 		_ = logger.With("key1", "value1", "key2")
 	})
 
@@ -737,7 +743,9 @@ func TestCtxMethods(t *testing.T) {
 		buf.Reset()
 
 		// Log with the Ctx version passing nil
-		logger.WarnfCtx(nil, "message %d", 1)
+		var nilCtx context.Context = nil
+
+		logger.WarnfCtx(nilCtx, "message %d", 1)
 		got := strings.TrimSpace(buf.String())
 
 		// We can't compare directly due to timestamp, so we check for the message part.
@@ -909,8 +917,11 @@ func TestNew_WithOptions(t *testing.T) {
 		if l.out != os.Stderr {
 			t.Errorf("expected default output to be os.Stderr, got %v", l.out)
 		}
-		if l.logLevel != logLevelValueInfo {
-			t.Errorf("expected default level to be Info, got %v", l.logLevel)
+
+		logLevel := l.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueInfo) {
+			t.Errorf("expected default level to be Info, got %v", logLevel)
 		}
 		if _, ok := l.formatter.(*jsonFormatter); !ok {
 			t.Errorf("expected default formatter to be jsonFormatter, got %T", l.formatter)
@@ -937,7 +948,10 @@ func TestNew_WithOptions(t *testing.T) {
 		if logger.out != &buf {
 			t.Error("WithOutput failed")
 		}
-		if logger.logLevel != logLevelValueDebug {
+
+		logLevel := logger.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
 			t.Error("WithLogLevel failed")
 		}
 		if _, ok := logger.formatter.(*textFormatter); !ok {
@@ -1036,8 +1050,11 @@ func TestSetupLogLevelFromEnv(t *testing.T) {
 		setup()
 		t.Setenv("HARELOG_LEVEL", "DEBUG")
 		setupLogLevelFromEnv()
-		if std.logLevel != logLevelValueDebug {
-			t.Errorf("expected level to be set to DEBUG, but got %v", std.logLevel)
+
+		logLevel := std.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
+			t.Errorf("expected level to be set to DEBUG, but got %v", logLevel)
 		}
 	})
 
@@ -1045,8 +1062,11 @@ func TestSetupLogLevelFromEnv(t *testing.T) {
 		setup()
 		t.Setenv("HARELOG_LEVEL", "INVALID_VALUE")
 		setupLogLevelFromEnv()
-		if std.logLevel != logLevelValueInfo {
-			t.Errorf("expected level to fall back to default INFO, but got %v", std.logLevel)
+
+		logLevel := std.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueInfo) {
+			t.Errorf("expected level to fall back to default INFO, but got %v", logLevel)
 		}
 	})
 }
@@ -1065,10 +1085,16 @@ func TestWithMethods_API(t *testing.T) {
 		if l2 == baseLogger {
 			t.Fatal("Expected a new instance")
 		}
-		if l2.logLevel != logLevelValueDebug {
+
+		logLevel := l2.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
 			t.Error("Change was not applied")
 		}
-		if baseLogger.logLevel == logLevelValueDebug {
+
+		logLevel = baseLogger.logLevel.Load()
+
+		if logLevel == uint32(logLevelValueDebug) {
 			t.Error("Original logger was mutated")
 		}
 	})
@@ -1118,7 +1144,10 @@ func TestSetDefaultFunctions_API(t *testing.T) {
 
 		// We must RLock to safely read std, matching the library's own practice.
 		stdMutex.RLock()
-		if std.logLevel != logLevelValueDebug {
+
+		logLevel := std.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
 			t.Error("SetDefaultLogLevel was not applied")
 		}
 		stdMutex.RUnlock()
@@ -1240,6 +1269,7 @@ func TestPanicScenarios(t *testing.T) {
 				t.Error("expected New(WithFields) to panic")
 			}
 		}()
+		//lint:ignore SA5012 "test of odd number of arguments
 		_ = New(WithFields("key"))
 	})
 
@@ -1613,4 +1643,85 @@ func captureStderr(t *testing.T) func() string {
 
 		return buf.String()
 	}
+}
+
+// TestLogger_SetLogLevel_Functional verifies that SetLogLevel correctly
+// changes the logger's behavior dynamically.
+func TestLogger_SetLogLevel_Functional(t *testing.T) {
+	// 1. Init logger at Info level
+	logger := New(WithLogLevel(LogLevelInfo))
+
+	// 2. Check initial state
+	if logger.IsDebugEnabled() {
+		t.Error("Initial state: expected IsDebugEnabled() to be false")
+	}
+	if !logger.IsInfoEnabled() {
+		t.Error("Initial state: expected IsInfoEnabled() to be true")
+	}
+
+	// 3. Change level to Debug
+	logger.SetLogLevel(LogLevelDebug)
+
+	// 4. Check state after Debug change
+	if !logger.IsDebugEnabled() {
+		t.Errorf("After SetLogLevel(Debug): expected IsDebugEnabled() to be true")
+	}
+	if !logger.IsInfoEnabled() {
+		t.Errorf("After SetLogLevel(Debug): expected IsInfoEnabled() to be true (Debug should also log Info)")
+	}
+
+	// 5. Change level to Warn
+	logger.SetLogLevel(LogLevelWarn)
+
+	// 6. Check state after Warn change
+	if logger.IsDebugEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsDebugEnabled() to be false")
+	}
+	if logger.IsInfoEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsInfoEnabled() to be false")
+	}
+	if !logger.IsWarnEnabled() {
+		t.Error("After SetLogLevel(Warn): expected IsWarnEnabled() to be true")
+	}
+}
+
+// TestLogger_SetLogLevel_Concurrency checks for data races when
+// SetLogLevel (write) and Is...Enabled (read) are called concurrently.
+//
+// This test is effective when run with the -race flag.
+func TestLogger_SetLogLevel_Concurrency(t *testing.T) {
+	t.Parallel()
+
+	logger := New(WithLogLevel(LogLevelInfo))
+	var wg sync.WaitGroup
+
+	// Start concurrent writers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 100; n++ {
+				logger.SetLogLevel(LogLevelDebug)
+				logger.SetLogLevel(LogLevelError)
+				logger.SetLogLevel(LogLevelInfo)
+			}
+		}()
+	}
+
+	// Start concurrent readers
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 100; n++ {
+				_ = logger.IsDebugEnabled()
+				_ = logger.IsInfoEnabled()
+				_ = logger.IsWarnEnabled()
+				_ = logger.IsErrorEnabled()
+			}
+		}()
+	}
+
+	wg.Wait()
+	// Test passes if `go test -race` reports no data race.
 }
