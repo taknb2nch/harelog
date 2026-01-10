@@ -754,8 +754,15 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 	e.SpanID = l.spanId
 	e.TraceSampled = l.traceSampled
 	e.CorrelationID = l.correlationID
-	e.Labels = l.labels
 	e.Time = time.Now()
+
+	if len(l.labels) > 0 {
+		if e.Labels == nil {
+			e.Labels = make(map[string]string, len(l.labels))
+		}
+
+		maps.Copy(e.Labels, l.labels)
+	}
 
 	// 2. Apply values from context.Context (lowest precedence).
 	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {
@@ -1692,4 +1699,9 @@ func handleInvalidKey(l *Logger, key string, fieldType string) bool {
 	}
 
 	return true
+}
+
+// Default returns the standard logger configured by the library.
+func Default() *Logger {
+	return std
 }

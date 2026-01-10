@@ -1725,3 +1725,38 @@ func TestLogger_SetLogLevel_Concurrency(t *testing.T) {
 	wg.Wait()
 	// Test passes if `go test -race` reports no data race.
 }
+
+func TestLogger_WithLabels_Persistence(t *testing.T) {
+	buf := new(bytes.Buffer)
+	// Create a logger with persistent labels
+	l := New(WithOutput(buf)).WithLabels(map[string]string{"env": "prod"})
+
+	// First log output
+	l.Infof("first")
+	if !strings.Contains(buf.String(), `"env":"prod"`) {
+		t.Fatal("Label missing in the first log output")
+	}
+
+	buf.Reset()
+
+	// Second log output (verifying persistence against reference sharing bug)
+	l.Infof("second")
+	if !strings.Contains(buf.String(), `"env":"prod"`) {
+		t.Fatal("Label missing in the second log output (possible reference sharing bug)")
+	}
+}
+
+func TestDefault(t *testing.T) {
+	// 1. Ensure Default() does not return nil
+	l := Default()
+	if l == nil {
+		t.Fatal("Default() returned nil")
+	}
+
+	// 2. Verify that it points to the same instance as 'std'
+	// Note: This test file must be in 'package harelog' (not 'package harelog_test')
+	// to access the unexported 'std' variable.
+	if l != std {
+		t.Errorf("Default() returned a different instance. Got %p, want %p", l, std)
+	}
+}
