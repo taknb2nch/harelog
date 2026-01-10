@@ -1745,3 +1745,18 @@ func TestLogger_WithLabels_Persistence(t *testing.T) {
 		t.Fatal("Label missing in the second log output (possible reference sharing bug)")
 	}
 }
+
+func TestDefault(t *testing.T) {
+	// 1. Ensure Default() does not return nil
+	l := Default()
+	if l == nil {
+		t.Fatal("Default() returned nil")
+	}
+
+	// 2. Verify that it points to the same instance as 'std'
+	// Note: This test file must be in 'package harelog' (not 'package harelog_test')
+	// to access the unexported 'std' variable.
+	if l != std {
+		t.Errorf("Default() returned a different instance. Got %p, want %p", l, std)
+	}
+}

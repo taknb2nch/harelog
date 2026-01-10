@@ -1700,3 +1700,8 @@ func handleInvalidKey(l *Logger, key string, fieldType string) bool {
 
 	return true
 }
+
+// Default returns the standard logger configured by the library.
+func Default() *Logger {
+	return std
+}
