@@ -854,11 +854,9 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 				b2.Write(strconv.AppendFloat(scratch[:0], val, 'f', -1, 64))
 			case fmt.Stringer:
-				// b2.WriteString(val.String())
 				appendStringValue(&b2, val.String())
 			default:
-				// b2.WriteString(fmt.Sprint(val))
-				appendStringValue(&b, fmt.Sprint(val))
+				appendStringValue(&b2, fmt.Sprint(val))
 			}
 
 			//-----
