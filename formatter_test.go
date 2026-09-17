@@ -254,7 +254,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:        "complex event",
 					Severity:       LogLevelWarn,
 					Time:           testTime,
-					Trace:          "trace-id-123",
+					TraceID:        "trace-id-123",
 					SpanID:         "span-id-456",
 					CorrelationID:  "corr-id-789",
 					Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
@@ -278,7 +278,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:       "complex event",
 					Severity:      LogLevelWarn,
 					Time:          testTime,
-					Trace:         "trace-id 123",
+					TraceID:       "trace-id 123",
 					SpanID:        "span-id=456",
 					CorrelationID: "corr-id\"789\"",
 					Labels: map[string]string{
@@ -303,7 +303,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:  "duplicate fields test",
 					Severity: LogLevelInfo,
 					Time:     testTime,
-					Trace:    "trace-A", // This one should be written
+					TraceID:  "trace-A", // This one should be written
 					Payload: map[string]interface{}{
 						"userID": "user-123",
 						"trace":  "trace-B", // This one should be skipped
@@ -971,7 +971,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Message:        "complex event",
 				Severity:       LogLevelWarn,
 				Time:           testTime,
-				Trace:          "trace-id-123",
+				TraceID:        "trace-id-123",
 				SpanID:         "span-id-456",
 				CorrelationID:  "corr-id-789",
 				Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
@@ -997,7 +997,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Message:  "duplicate fields test",
 				Severity: LogLevelInfo,
 				Time:     testTime,
-				Trace:    "trace-A", // This one should be written
+				TraceID:  "trace-A", // This one should be written
 				Payload: map[string]interface{}{
 					"userID": "user-123",
 					"trace":  "trace-B", // This one should be skipped
@@ -1225,7 +1225,7 @@ var benchmarkEntryComplex = &LogEntry{
 	Message:        "complex event", // No space in message
 	Severity:       LogLevelWarn,
 	Time:           benchmarkTime,
-	Trace:          "trace-id-123",
+	TraceID:        "trace-id-123",
 	SpanID:         "span-id-456",
 	CorrelationID:  "corr-id-789",
 	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
@@ -1251,7 +1251,7 @@ var benchmarkEntryComplexMasking = &LogEntry{
 	Message:        "complex event masking", // Changed message for clarity
 	Severity:       LogLevelWarn,
 	Time:           benchmarkTime,
-	Trace:          "trace-id-123",
+	TraceID:        "trace-id-123",
 	SpanID:         "span-id-456",
 	CorrelationID:  "corr-id-789",
 	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},

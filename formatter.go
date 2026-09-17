@@ -141,7 +141,7 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	head.Message = e.Message
 	head.Severity = e.Severity
-	head.Trace = e.Trace
+	head.Trace = e.TraceID
 	head.SpanID = e.SpanID
 	head.TraceSampled = e.TraceSampled
 	head.HTTPRequest = e.HTTPRequest
@@ -282,10 +282,10 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	if e.Trace != "" {
+	if e.TraceID != "" {
 		b.WriteString("trace")
 		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
+		appendStringValue(&b, e.TraceID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -708,10 +708,10 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	if e.Trace != "" {
+	if e.TraceID != "" {
 		b.WriteString("trace")
 		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
+		appendStringValue(&b, e.TraceID)
 		b.WriteByte(',')
 		b.WriteByte(' ')
 
@@ -1057,10 +1057,10 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	if e.Trace != "" {
+	if e.TraceID != "" {
 		b.WriteString("trace")
 		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
+		appendStringValue(&b, e.TraceID)
 		b.WriteByte(' ')
 
 		isTrace = true

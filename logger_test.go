@@ -2,7 +2,6 @@ package harelog
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -668,116 +667,6 @@ func TestFatalwMethod(t *testing.T) {
 	}
 }
 
-// TestCtxMethods verifies the functionality of all context-aware methods.
-func TestCtxMethods(t *testing.T) {
-	t.Parallel()
-
-	// Define a custom context key for testing, mimicking how real applications do it.
-	type contextKey string
-	const traceContextKey = contextKey("x-cloud-trace-context")
-
-	t.Run("Values are extracted from context with ProjectID", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		// Create a logger with the Project ID configured via the new option.
-		logger := New(
-			WithOutput(&buf),
-			WithProjectID("test-project"),
-			WithTraceContextKey(traceContextKey),
-		)
-		ctx := context.WithValue(context.Background(), traceContextKey, "trace-from-ctx/span-from-ctx;o=1")
-
-		logger.InfofCtx(ctx, "message with trace")
-
-		var entry map[string]interface{}
-		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-			t.Fatalf("failed to unmarshal JSON: %v", err)
-		}
-
-		expectedTrace := "projects/test-project/traces/trace-from-ctx"
-		if trace, _ := entry["logging.googleapis.com/trace"].(string); trace != expectedTrace {
-			t.Errorf("expected trace %q to be extracted, got %q", expectedTrace, trace)
-		}
-		if span, _ := entry["logging.googleapis.com/spanId"].(string); span != "span-from-ctx" {
-			t.Errorf("expected spanId %q to be extracted, got %q", "span-from-ctx", span)
-		}
-	})
-
-	t.Run("Precedence: Method args > With > Context", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		ctx := context.WithValue(context.Background(), traceContextKey, "ctx-trace/ctx-span")
-
-		// Create a child logger with a conflicting trace value.
-		loggerWithContext := New(WithOutput(&buf)).With("[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "with-trace")
-
-		// Call a ...wCtx method with another conflicting trace value.
-		loggerWithContext.InfowCtx(ctx, "testing precedence", "[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "arg-trace")
-
-		var entry map[string]interface{}
-		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-			t.Fatalf("failed to unmarshal JSON: %v", err)
-		}
-
-		// The value from the method argument ("arg-trace") should win.
-		expectedTrace := "arg-trace"
-		if trace, _ := entry["[logging.googleapis.com/trace](https://logging.googleapis.com/trace)"].(string); trace != expectedTrace {
-			t.Errorf("precedence failed: expected trace to be %q, got %q", expectedTrace, trace)
-		}
-	})
-
-	t.Run("Nil context behaves like non-Ctx version", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		logger := New(WithOutput(&buf))
-
-		// Log with the non-Ctx version
-		logger.Warnf("message %d", 1)
-		expected := strings.TrimSpace(buf.String())
-		buf.Reset()
-
-		// Log with the Ctx version passing nil
-		var nilCtx context.Context = nil
-
-		logger.WarnfCtx(nilCtx, "message %d", 1)
-		got := strings.TrimSpace(buf.String())
-
-		// We can't compare directly due to timestamp, so we check for the message part.
-		if !strings.Contains(got, `"message":"message 1"`) {
-			t.Errorf("nil context call did not produce the expected message. Got: %s", got)
-		}
-		if !strings.Contains(expected, `"message":"message 1"`) {
-			t.Errorf("non-Ctx call did not produce the expected message. Got: %s", expected)
-		}
-	})
-
-	t.Run("FatalCtx logs and exits", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		logger := New(WithOutput(&buf))
-		ctx := context.Background()
-
-		getExitCode := mockOsExit(t)
-
-		logger.FatalCtx(ctx, "fatal message from ctx")
-
-		if !strings.Contains(buf.String(), `"message":"fatal message from ctx"`) {
-			t.Errorf("FatalCtx did not log the correct message. Got: %s", buf.String())
-		}
-		if getExitCode() != 1 {
-			t.Errorf("expected os.Exit(1) to be called from FatalCtx, but exit code was %d", getExitCode())
-		}
-	})
-}
-
 // TestFormatters verifies the WithFormatter option and logger's integration with formatters.
 func TestFormatters(t *testing.T) {
 	// Test that New() without options uses JSONFormatter
@@ -938,8 +827,8 @@ func TestNew_WithOptions(t *testing.T) {
 			WithLogLevel(LogLevelDebug),
 			WithFormatter(Text.NewFormatter()),
 			WithAutoSource(SourceLocationModeAlways),
-			WithProjectID("test-project"),
-			WithTraceContextKey("test-key"),
+			// WithProjectID("test-project"),
+			// WithTraceContextKey("test-key"),
 			WithPrefix("[test] "),
 			WithLabels(labels),
 			WithFields("common_key", "common_value"),
@@ -960,12 +849,7 @@ func TestNew_WithOptions(t *testing.T) {
 		if logger.sourceLocationMode != SourceLocationModeAlways {
 			t.Error("WithAutoSource failed")
 		}
-		if logger.projectID != "test-project" {
-			t.Error("WithProjectID failed")
-		}
-		if logger.traceContextKey != "test-key" {
-			t.Error("WithTraceContextKey failed")
-		}
+
 		if logger.prefix != "[test] " {
 			t.Error("WithPrefix failed")
 		}
@@ -1248,17 +1132,6 @@ func TestPanicScenarios(t *testing.T) {
 			}
 		}()
 		_ = New(WithAutoSource(sourceLocationMode(99)))
-	})
-
-	t.Run("WithTraceContextKey option with nil key", func(t *testing.T) {
-		t.Parallel()
-
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected New(WithTraceContextKey) to panic")
-			}
-		}()
-		_ = New(WithTraceContextKey(nil))
 	})
 
 	t.Run("WithFields option with odd arguments", func(t *testing.T) {

@@ -68,19 +68,6 @@ func main() {
 	reqLogger.Infow("Request processed.", "status", 200)
 	reqLogger.Warnf("Upstream service took %dms", 250)
 
-	// ---
-	println("\n--- 6. Testing context.Context Integration (Ctx methods) ---")
-	// ---
-	// The key your web framework would use to store the trace header.
-	const traceHeaderKey = "x-cloud-trace-context"
-	ctxLogger := harelog.New(
-		harelog.WithProjectID("my-gcp-project-id"),
-		harelog.WithTraceContextKey(traceHeaderKey),
-	)
-	// Simulate a context that has the trace header value.
-	ctx := context.WithValue(context.Background(), traceHeaderKey, "my-trace-id-from-ctx/my-span-id;o=1")
-	ctxLogger.InfofCtx(ctx, "This log should contain trace and span info from the context.")
-
 	// Sleep briefly to ensure all logs are flushed if they were asynchronous.
 	time.Sleep(10 * time.Millisecond)
 }
