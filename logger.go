@@ -154,9 +154,9 @@ type HTTPRequest struct {
 
 // SourceLocation represents the location in the source code where a log entry was generated.
 type SourceLocation struct {
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Function string `json:"function,omitempty"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Function string `json:"function"`
 }
 
 // --- Log Entry Structure ---
@@ -1523,24 +1523,6 @@ func WithAutoSource(mode sourceLocationMode) Option {
 		l.sourceLocationMode = mode
 	}
 }
-
-// WithProjectID sets the Google Cloud Project ID to be used for formatting trace identifiers.
-// func WithProjectID(id string) Option {
-// 	return func(l *Logger) {
-// 		l.projectID = id
-// 	}
-// }
-
-// WithTraceContextKey sets the key used to extract Google Cloud Trace data from a context.Context.
-// func WithTraceContextKey(key interface{}) Option {
-// 	if key == nil {
-// 		panic("harelog: nil key provided to WithTraceContextKey; context keys must be non-nil")
-// 	}
-
-// 	return func(l *Logger) {
-// 		l.traceContextKey = key
-// 	}
-// }
 
 // WithPrefix sets the initial message prefix.
 func WithPrefix(prefix string) Option {
