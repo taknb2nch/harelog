@@ -40,13 +40,9 @@ var jsonEntryPool = sync.Pool{
 }
 
 type jsonEntry struct {
-	Message        string          `json:"message"`
-	Severity       LogLevel        `json:"severity,omitempty"`
-	Trace          string          `json:"logging.googleapis.com/trace,omitempty"`
-	SpanID         string          `json:"logging.googleapis.com/spanId,omitempty"`
-	TraceSampled   *bool           `json:"logging.googleapis.com/trace_sampled,omitempty"`
-	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
-	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
+	Message     string       `json:"message"`
+	Severity    LogLevel     `json:"severity,omitempty"`
+	HTTPRequest *HTTPRequest `json:"httpRequest,omitempty"`
 
 	Time   time.Time         `json:"timestamp,omitempty"`
 	Labels map[string]string `json:"labels,omitempty"`
@@ -58,11 +54,7 @@ type jsonEntry struct {
 func (e *jsonEntry) Clear() {
 	e.Message = ""
 	e.Severity = ""
-	e.Trace = ""
-	e.SpanID = ""
-	e.TraceSampled = nil
 	e.HTTPRequest = nil
-	e.SourceLocation = nil
 	e.Time = time.Time{}
 	// e.Labels = nil // Set to nil, as it's a reference
 	e.CorrelationID = ""
@@ -99,7 +91,12 @@ func (jsonOptions) WithMaskingKeysIgnoreCase(keys ...string) JSONFormatterOption
 
 // NewJSONFormatter creates a new JSONFormatter.
 func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
-	formatter := &jsonFormatter{}
+	formatter := &jsonFormatter{
+		traceKeyBytes:          []byte(`,"traceId":"`),
+		spanIDKeyBytes:         []byte(`,"spanId":"`),
+		traceSampledKeyBytes:   []byte(`,"traceSampled":`),
+		sourceLocationKeyBytes: []byte(`,"sourceLocation":`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -111,6 +108,11 @@ func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
 // jsonFormatter formats log entries as JSON.
 type jsonFormatter struct {
 	maskingCore
+
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Deprecated: Use harelog.JSON.NewFormatter instead.
@@ -141,11 +143,7 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	head.Message = e.Message
 	head.Severity = e.Severity
-	head.Trace = e.TraceID
-	head.SpanID = e.SpanID
-	head.TraceSampled = e.TraceSampled
 	head.HTTPRequest = e.HTTPRequest
-	head.SourceLocation = e.SourceLocation
 	head.Time = e.Time
 	head.Labels = e.Labels
 	head.CorrelationID = e.CorrelationID
@@ -155,24 +153,94 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 		return nil, err
 	}
 
-	if len(e.Payload) == 0 {
-		return headerBytes, nil
+	var payloadBytes []byte
+
+	if len(e.Payload) > 0 {
+		payloadBytes, err = json.Marshal(e.Payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	payloadBytes, err := json.Marshal(e.Payload)
-	if err != nil {
-		return nil, err
+	growSize := len(headerBytes)
+
+	if e.TraceID != "" {
+		growSize += len(f.traceKeyBytes) + len(e.TraceID) + 1
 	}
 
-	if len(headerBytes) <= 2 {
-		return payloadBytes, nil
+	if e.SpanID != "" {
+		growSize += len(f.spanIDKeyBytes) + len(e.SpanID) + 1
 	}
 
-	out := headerBytes[:len(headerBytes)-1]
-	out = append(out, ',')
-	out = append(out, payloadBytes[1:]...)
+	if e.TraceSampled != nil {
+		growSize += len(f.traceSampledKeyBytes) + 5 // true or false
+	}
 
-	return out, nil
+	var sourceLocationLineBytes []byte
+	var scratch [64]byte
+
+	if e.SourceLocation != nil {
+		sourceLocationLineBytes = strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10)
+
+		growSize += len(f.sourceLocationKeyBytes)
+		growSize += len(`{"file":"`)
+		growSize += len(e.SourceLocation.File)
+		growSize += len(`{"line:"`)
+		growSize += len(sourceLocationLineBytes)
+		growSize += len(`,"function":"`)
+		growSize += len(e.SourceLocation.Function)
+		growSize += 2
+	}
+
+	if len(payloadBytes) > 2 {
+		growSize += len(payloadBytes) - 1
+	}
+
+	var b bytes.Buffer
+
+	b.Grow(growSize)
+
+	b.Write(headerBytes[:len(headerBytes)-1])
+
+	if e.TraceID != "" {
+		b.Write(f.traceKeyBytes)
+		b.WriteString(e.TraceID)
+		b.WriteByte('"')
+	}
+
+	if e.SpanID != "" {
+		b.Write(f.spanIDKeyBytes)
+		b.WriteString(e.SpanID)
+		b.WriteByte('"')
+	}
+
+	if e.TraceSampled != nil {
+		b.Write(f.traceSampledKeyBytes)
+		b.Write(strconv.AppendBool(scratch[:0], *e.TraceSampled))
+	}
+
+	if e.SourceLocation != nil {
+		b.Write(f.sourceLocationKeyBytes)
+		b.WriteString(`{"file":"`)
+		b.WriteString(e.SourceLocation.File)
+		b.WriteString(`","line":`)
+		b.Write(sourceLocationLineBytes)
+		b.WriteString(`,"function":"`)
+		b.WriteString(e.SourceLocation.Function)
+		b.WriteString(`"}`)
+	}
+
+	if len(payloadBytes) > 2 {
+		if len(headerBytes) > 2 || e.TraceID != "" || e.SpanID != "" || e.TraceSampled != nil || e.SourceLocation != nil {
+			b.WriteByte(',')
+		}
+
+		b.Write(payloadBytes[1 : len(payloadBytes)-1])
+	}
+
+	b.WriteByte('}')
+
+	return b.Bytes(), nil
 }
 
 // FormatMessageOnly formats only the timestamp, severity, and message fields into logfmt format.

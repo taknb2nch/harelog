@@ -469,7 +469,7 @@ func TestSpecialFields(t *testing.T) {
 			t.Fatalf("failed to unmarshal log output: %v", err)
 		}
 
-		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		slMap, ok := entry["sourceLocation"].(map[string]interface{})
 		if !ok {
 			t.Fatal("sourceLocation not found or not a map in log output")
 		}
@@ -730,11 +730,12 @@ func TestAutoSource_Modes(t *testing.T) {
 		}
 
 		var entry map[string]interface{}
+
 		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
 			// Consider a failure to unmarshal as the field not being present.
 			return false
 		}
-		_, exists := entry["logging.googleapis.com/sourceLocation"]
+		_, exists := entry["sourceLocation"]
 		return exists
 	}
 
@@ -789,7 +790,7 @@ func TestAutoSource_Modes(t *testing.T) {
 			t.Fatalf("failed to unmarshal JSON: %v", err)
 		}
 
-		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		slMap, ok := entry["sourceLocation"].(map[string]interface{})
 		if !ok {
 			t.Fatal("manual sourceLocation field should be present")
 		}
