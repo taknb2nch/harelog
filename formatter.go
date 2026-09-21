@@ -19,6 +19,13 @@ const (
 	maskedValueString string = "[MASKED]"
 )
 
+const (
+	FieldKeyTraceID        = "traceId"
+	FieldKeySpanID         = "spanId"
+	FieldKeyTraceSampled   = "traceSampled"
+	FieldKeySourceLocation = "sourceLocation"
+)
+
 var (
 	maskedValueBytes []byte = []byte(maskedValueString)
 )
@@ -68,6 +75,11 @@ type Formatter interface {
 	FormatMessageOnly(entry *LogEntry) ([]byte, error)
 }
 
+// KeyOverrider is implemented by formatters that support overriding default log key names.
+type KeyOverrider interface {
+	OverrideKeys(overrides map[string]string)
+}
+
 var JSON = jsonOptions{}
 
 type JSONFormatterOption func(f *jsonFormatter)
@@ -92,10 +104,10 @@ func (jsonOptions) WithMaskingKeysIgnoreCase(keys ...string) JSONFormatterOption
 // NewJSONFormatter creates a new JSONFormatter.
 func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
 	formatter := &jsonFormatter{
-		traceKeyBytes:          []byte(`,"traceId":"`),
-		spanIDKeyBytes:         []byte(`,"spanId":"`),
-		traceSampledKeyBytes:   []byte(`,"traceSampled":`),
-		sourceLocationKeyBytes: []byte(`,"sourceLocation":`),
+		traceKeyBytes:          []byte(`,"` + FieldKeyTraceID + `":"`),
+		spanIDKeyBytes:         []byte(`,"` + FieldKeySpanID + `":"`),
+		traceSampledKeyBytes:   []byte(`,"` + FieldKeyTraceSampled + `":`),
+		sourceLocationKeyBytes: []byte(`,"` + FieldKeySourceLocation + `":`),
 	}
 
 	for _, opt := range opts {
@@ -257,6 +269,23 @@ func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	b.WriteString(`}`)
 
 	return b.Bytes(), nil
+}
+
+func (f *jsonFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = []byte(`,"` + v + `":`)
+		default:
+			// do nothing
+		}
+	}
 }
 
 var Text = textOptions{}

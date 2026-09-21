@@ -1449,3 +1449,46 @@ func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
+
+// TestJSONFormatter_OverrideKeys verifies that specific JSON keys can be customized.
+func TestJSONFormatter_OverrideKeys(t *testing.T) {
+	t.Parallel()
+
+	f := JSON.NewFormatter()
+
+	// New()内で行われる事後処理（インターフェースによる遅延適用）をシミュレート
+	f.OverrideKeys(map[string]string{
+		FieldKeyTraceID:        "logging.googleapis.com/trace",
+		FieldKeySpanID:         "logging.googleapis.com/spanId",
+		FieldKeyTraceSampled:   "logging.googleapis.com/trace_sampled",
+		FieldKeySourceLocation: "logging.googleapis.com/sourceLocation",
+	})
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+		// ※実装に合わせて設定してください
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// オーバーライドしたキー名でJSONが出力されているか確認
+	if !strings.Contains(s, `"logging.googleapis.com/trace":"trace-123"`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/spanId":"span-456"`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/sourceLocation":{`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}

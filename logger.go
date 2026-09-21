@@ -247,6 +247,7 @@ func (e *LogEntry) applyKVs(kvs ...interface{}) {
 }
 
 // --- Logger ---
+type EntryModifier func(e *LogEntry)
 
 // Logger is a structured logger that provides leveled logging.
 // Instances of Logger are safe for concurrent use.
@@ -265,6 +266,8 @@ type Logger struct {
 
 	formatter Formatter
 
+	entryModifiers []EntryModifier
+
 	// for hooks
 	hookBufferSize int
 	hooks          []Hook
@@ -273,6 +276,8 @@ type Logger struct {
 	hookWg         sync.WaitGroup
 
 	outMutex sync.Mutex
+
+	keyOverrides map[string]string
 }
 
 // New creates a new Logger with default settings.
@@ -289,13 +294,21 @@ func New(opts ...Option) *Logger {
 		payload:            make(map[string]interface{}),
 		sourceLocationMode: SourceLocationModeNever,
 		formatter:          JSON.NewFormatter(),
+		entryModifiers:     []EntryModifier{},
 		hookBufferSize:     100,
+		keyOverrides:       make(map[string]string),
 	}
 
 	logger.logLevel.Store(uint32(logLevelValueInfo))
 
 	for _, opt := range opts {
 		opt(logger)
+	}
+
+	if len(logger.keyOverrides) > 0 {
+		if overridable, ok := logger.formatter.(KeyOverrider); ok {
+			overridable.OverrideKeys(logger.keyOverrides)
+		}
 	}
 
 	if len(logger.hooks) > 0 {
@@ -412,6 +425,7 @@ func (l *Logger) Clone() *Logger {
 		correlationID:      l.correlationID,
 		sourceLocationMode: l.sourceLocationMode,
 		formatter:          l.formatter,
+		entryModifiers:     l.entryModifiers,
 		hooks:              l.hooks,
 		hookChan:           l.hookChan,
 	}
@@ -709,6 +723,10 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 // It is called *after* a level check has been performed by a public method.
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
+
+	for _, modifier := range l.entryModifiers {
+		modifier(e)
+	}
 
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
@@ -1588,6 +1606,28 @@ func WithHooks(hooks ...Hook) Option {
 		l.hooks = make([]Hook, 0, len(hooks))
 
 		l.hooks = append(l.hooks, hooks...)
+	}
+}
+
+// WithEntryModifier registers an EntryModifier to modify log entries before formatting.
+func WithEntryModifier(modifier EntryModifier) Option {
+	return func(l *Logger) {
+		if modifier == nil {
+			return
+		}
+
+		l.entryModifiers = append(l.entryModifiers, modifier)
+	}
+}
+
+// WithKeyOverride sets a custom output name for a specific log key.
+func WithKeyOverride(key string, value string) Option {
+	return func(l *Logger) {
+		if key == "" || value == "" {
+			return
+		}
+
+		l.keyOverrides[key] = value
 	}
 }
 

@@ -1634,3 +1634,34 @@ func TestDefault(t *testing.T) {
 		t.Errorf("Default() returned a different instance. Got %p, want %p", l, std)
 	}
 }
+
+// TestWithEntryModifier verifies that EntryModifiers correctly modify LogEntry before formatting.
+func TestWithEntryModifier(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := New(
+		WithOutput(&buf),
+		WithEntryModifier(func(e *LogEntry) {
+			// 値の追加と加工のテスト
+			e.Payload["injected"] = "modified_value"
+		}),
+	)
+
+	logger.Infow("modifier test", "original", "value")
+
+	var entry map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	// 1. Modifierによって値が追加されているか
+	if val, ok := entry["injected"].(string); !ok || val != "modified_value" {
+		t.Errorf("expected payload to contain injected='modified_value', got %v", entry["injected"])
+	}
+
+	// 2. 元のフィールドが破壊されていないか
+	if val, ok := entry["original"].(string); !ok || val != "value" {
+		t.Errorf("expected payload to contain original='value', got %v", entry["original"])
+	}
+}
