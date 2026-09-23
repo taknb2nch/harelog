@@ -127,11 +127,6 @@ type jsonFormatter struct {
 	sourceLocationKeyBytes []byte
 }
 
-// Deprecated: Use harelog.JSON.NewFormatter instead.
-func NewJSONFormatter() *jsonFormatter {
-	return JSON.NewFormatter()
-}
-
 // Format converts a logEntry to JSON format.
 func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 	head := jsonEntryPool.Get().(*jsonEntry)
@@ -318,11 +313,6 @@ type textFormatter struct {
 	spanIDKeyBytes         []byte
 	traceSampledKeyBytes   []byte
 	sourceLocationKeyBytes []byte
-}
-
-// Deprecated: Use harelog.Text.NewFormatter instead.
-func NewTextFormatter() *textFormatter {
-	return Text.NewFormatter()
 }
 
 // Format converts a logEntry to a single-line text format.
@@ -746,21 +736,6 @@ type consoleFormatter struct {
 // ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
 type ConsoleFormatterOption func(*consoleFormatter)
 
-// Deprecated: Use harelog.Console.NewFormatter instead.
-func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
-	return Console.NewFormatter(opts...)
-}
-
-// Deprecated: Use harelog.Console.WithLogLevelColor instead.
-func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
-	return Console.WithLogLevelColor(enabled)
-}
-
-// Deprecated: Use harelog.Console.WithKeyHighlight instead.
-func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
-	return Console.WithKeyHighlight(key, attrs...)
-}
-
 // Format overrides the default TextFormatter's field formatting to add highlighting.
 func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
@@ -1156,11 +1131,6 @@ type logfmtFormatter struct {
 	spanIDKeyBytes         []byte
 	traceSampledKeyBytes   []byte
 	sourceLocationKeyBytes []byte
-}
-
-// Deprecated: Use harelog.Logfmt.NewFormatter instead.
-func NewLogfmtFormatter() *logfmtFormatter {
-	return Logfmt.NewFormatter()
 }
 
 // Format converts a logEntry into a byte slice formatted as logfmt.
