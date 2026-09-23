@@ -1,6 +1,6 @@
 # harelog [![Go](https://github.com/taknb2nch/harelog/actions/workflows/go.yaml/badge.svg?branch=main)](https://github.com/taknb2nch/harelog/actions/workflows/go.yaml)
 
-A simple and flexible Go logger for Google Cloud, with powerful context handling and developer-friendly output.
+A simple and flexible Go logger, with powerful context handling and developer-friendly output.
 
 ---
 
@@ -13,24 +13,6 @@ go get github.com/taknb2nch/harelog
 ---
 
 ## Usage
-
-### Deprecation Notice
-
-As of `v1.11.0`, the top-level constructor functions (e.g., `harelog.NewTextFormatter()`) have been **deprecated**.
-
-They will be removed in a future major version. Please migrate to the new namespaced API (`harelog.JSON`, `harelog.Text`, `harelog.Console`, and `harelog.Logfmt`) to ensure future compatibility and to access new features like masking.
-
-**Old (Deprecated):**
-```go
-// DEPRECATED
-fmt := harelog.NewTextFormatter()
-```
-
-**New (Recommended):**
-```go
-// RECOMMENDED
-fmt := harelog.Text.NewFormatter()
-```
 
 ### Basic & Structured Logging
 
@@ -83,11 +65,11 @@ To ensure valid structured logging, keys provided to `With`, `...w`, or option f
 
 ### Logging with `context.Context` (`...Ctx` methods)
 
-For integration with tracing systems, you can use the `...Ctx` variants of the logging methods. `harelog` can automatically extract trace information from a `context.Context` (see Configuration section for setup).
+For integration with tracing systems, you can use the `...Ctx` variants of the logging methods. `harelog` can automatically extract trace information from a `context.Context`.
 
 ```go
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	// The request context `r.Context()` typically contains the trace header.
+	// The request context `r.Context()` typically contains trace/span information.
 	logger.InfofCtx(r.Context(), "handling request")
 }
 ```
@@ -105,7 +87,7 @@ The most common way to configure a logger is at initialization using functional 
 logger := harelog.New(
 	harelog.WithOutput(os.Stdout),
 	harelog.WithLogLevel(harelog.LogLevelDebug),
-	harelog.WithFormatter(harelog.NewTextFormatter()),
+	harelog.WithFormatter(harelog.Text.NewFormatter()),
 	harelog.WithAutoSource(harelog.SourceLocationModeAlways),
 	harelog.WithPrefix("[app] "),
 	harelog.WithLabels(map[string]string{"service": "api"}),
@@ -218,21 +200,30 @@ The color output of the `ConsoleFormatter` can be controlled globally. This is u
 
 The variables are evaluated in the following order of priority:
 
-1.  **`HARELOG_FORCE_COLOR`**: If set, color is **ON**.
-2.  **`HARELOG_NO_COLOR`**: If set, color is **OFF**.
-3.  **`NO_COLOR`**: If set, color is **OFF**.
-4.  **Default Behavior**: Automatic detection based on whether the output is a TTY.
+1.  **`HARELOG_FORCE_COLOR`**: If set, color is **ON**.
+2.  **`HARELOG_NO_COLOR`**: If set, color is **OFF**.
+3.  **`NO_COLOR`**: If set, color is **OFF**.
+4.  **Default Behavior**: Automatic detection based on whether the output is a TTY.
 
-### Configuring for Google Cloud Trace
+---
 
-To enable automatic trace extraction from a `context.Context`, you must provide a Project ID and the context key your application uses.
+### Platform Integrations (Adaptors)
+
+`harelog` keeps its core agnostic, but provides seamless integration with specific platforms via Adaptors. 
+
+#### Google Cloud Logging Integration
+
+To seamlessly integrate with Google Cloud Logging (including Trace and Source Location formatting), use the `WithCloudLogging` option provided by the `gcp` subpackage. This automatically configures key overrides and entry modifiers to perfectly match GCP's structured logging requirements.
 
 ```go
-const frameworkTraceKey = "x-cloud-trace-context" 
+import (
+	"github.com/taknb2nch/harelog"
+	"github.com/taknb2nch/harelog/gcp"
+)
 
+// Simply pass the Adaptor option to your logger
 logger := harelog.New(
-	harelog.WithProjectID("my-gcp-project-id"),
-	harelog.WithTraceContextKey(frameworkTraceKey),
+	gcp.WithCloudLogging("my-gcp-project-id"),
 )
 ```
 
@@ -284,6 +275,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/taknb2nch/harelog"
 )
 
@@ -342,8 +335,8 @@ When you provide the following keys to a `...w` function or the `With` method, t
 | Key | Type | Description |
 | :--- | :--- | :--- |
 | `error` | `error` | An error object. Its message is automatically added to the log. |
-| `httpRequest` | `*harelog.HTTPRequest` | **For Google Cloud Logging:** HTTP request information. |
-| `sourceLocation` | `*harelog.SourceLocation` | **For Google Cloud Logging:** Source code location information. |
+| `httpRequest` | `*harelog.HTTPRequest` | HTTP request information. |
+| `sourceLocation` | `*harelog.SourceLocation` | Source code location information. |
 
 ---
 
