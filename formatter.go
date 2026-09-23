@@ -104,10 +104,10 @@ func (jsonOptions) WithMaskingKeysIgnoreCase(keys ...string) JSONFormatterOption
 // NewJSONFormatter creates a new JSONFormatter.
 func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
 	formatter := &jsonFormatter{
-		traceKeyBytes:          []byte(`,"` + FieldKeyTraceID + `":"`),
-		spanIDKeyBytes:         []byte(`,"` + FieldKeySpanID + `":"`),
-		traceSampledKeyBytes:   []byte(`,"` + FieldKeyTraceSampled + `":`),
-		sourceLocationKeyBytes: []byte(`,"` + FieldKeySourceLocation + `":`),
+		traceKeyBytes:          []byte(`,"traceId":"`),
+		spanIDKeyBytes:         []byte(`,"spanId":"`),
+		traceSampledKeyBytes:   []byte(`,"traceSampled":`),
+		sourceLocationKeyBytes: []byte(`,"sourceLocation":`),
 	}
 
 	for _, opt := range opts {
@@ -297,7 +297,12 @@ type textOptions struct{}
 
 // NewTextFormatter creates a new TextFormatter.
 func (textOptions) NewFormatter(opts ...TextFormatterOption) *textFormatter {
-	formatter := &textFormatter{}
+	formatter := &textFormatter{
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -309,6 +314,10 @@ func (textOptions) NewFormatter(opts ...TextFormatterOption) *textFormatter {
 // textFormatter formats log entries as human-readable text.
 type textFormatter struct {
 	maskingCore
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Deprecated: Use harelog.Text.NewFormatter instead.
@@ -357,7 +366,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.SourceLocation != nil {
 		if _, ok := e.Payload["sourceLocation"]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -380,7 +389,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.TraceID != "" {
-		b.WriteString("trace")
+		b.Write(f.traceKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.TraceID)
 		b.WriteByte(',')
@@ -390,7 +399,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
+		b.Write(f.spanIDKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.SpanID)
 		b.WriteByte(',')
@@ -561,6 +570,25 @@ func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return formatBasicMessage(e), nil
 }
 
+func (f *textFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
+}
+
 func formatBasicMessage(e *LogEntry) []byte {
 	var b bytes.Buffer
 
@@ -627,9 +655,13 @@ type consoleOptions struct{}
 // NewConsoleFormatter creates a new ConsoleFormatter.
 func (consoleOptions) NewFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	formatter := &consoleFormatter{
-		enableColor:      false,
-		isEnableColorSet: false,
-		highlightColors:  make(map[string]*color.Color),
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+		enableColor:            false,
+		isEnableColorSet:       false,
+		highlightColors:        make(map[string]*color.Color),
 	}
 
 	for _, opt := range opts {
@@ -702,9 +734,13 @@ func (consoleOptions) WithMaskingKeysIgnoreCase(keys ...string) ConsoleFormatter
 // It supports highlighting specific key-value pairs to improve readability.
 type consoleFormatter struct {
 	maskingCore
-	enableColor      bool
-	isEnableColorSet bool
-	highlightColors  map[string]*color.Color
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
+	enableColor            bool
+	isEnableColorSet       bool
+	highlightColors        map[string]*color.Color
 }
 
 // ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
@@ -783,7 +819,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.SourceLocation != nil {
 		if _, ok := e.Payload["sourceLocation"]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -806,7 +842,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.TraceID != "" {
-		b.WriteString("trace")
+		b.Write(f.traceKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.TraceID)
 		b.WriteByte(',')
@@ -816,7 +852,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
+		b.Write(f.spanIDKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.SpanID)
 		b.WriteByte(',')
@@ -1001,6 +1037,25 @@ func (f *consoleFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return formatBasicMessage(e), nil
 }
 
+func (f *consoleFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
+}
+
 // should UseColor determines if color should be used for the output.
 func (f *consoleFormatter) shouldUseColor() bool {
 	if os.Getenv("HARELOG_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
@@ -1076,7 +1131,12 @@ func (logfmtOptions) WithMaskingKeysIgnoreCase(keys ...string) LogfmtFormatterOp
 
 // NewLogfmtFormatter creates a new LogfmtFormatter.
 func (logfmtOptions) NewFormatter(opts ...LogfmtFormatterOption) *logfmtFormatter {
-	formatter := &logfmtFormatter{}
+	formatter := &logfmtFormatter{
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -1091,6 +1151,11 @@ func (logfmtOptions) NewFormatter(opts ...LogfmtFormatterOption) *logfmtFormatte
 // Values containing spaces, '=', or '"' characters will be double-quoted.
 type logfmtFormatter struct {
 	maskingCore
+
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Deprecated: Use harelog.Logfmt.NewFormatter instead.
@@ -1135,7 +1200,7 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 	if e.SourceLocation != nil {
 		if _, ok := e.Payload["sourceLocation"]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -1155,7 +1220,7 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.TraceID != "" {
-		b.WriteString("trace")
+		b.Write(f.traceKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.TraceID)
 		b.WriteByte(' ')
@@ -1164,7 +1229,7 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
+		b.Write(f.spanIDKeyBytes)
 		b.WriteByte('=')
 		appendStringValue(&b, e.SpanID)
 		b.WriteByte(' ')
@@ -1335,4 +1400,23 @@ func (f *logfmtFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	appendStringValue(&b, e.Message)
 
 	return b.Bytes(), nil
+}
+
+func (f *logfmtFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
 }

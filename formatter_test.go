@@ -199,6 +199,49 @@ func TestJSONFormatter_Masking(t *testing.T) {
 	}
 }
 
+// TestJSONFormatter_OverrideKeys verifies that specific JSON keys can be customized.
+func TestJSONFormatter_OverrideKeys(t *testing.T) {
+	t.Parallel()
+
+	f := JSON.NewFormatter()
+
+	// New()内で行われる事後処理（インターフェースによる遅延適用）をシミュレート
+	f.OverrideKeys(map[string]string{
+		FieldKeyTraceID:        "logging.googleapis.com/trace",
+		FieldKeySpanID:         "logging.googleapis.com/spanId",
+		FieldKeyTraceSampled:   "logging.googleapis.com/trace_sampled",
+		FieldKeySourceLocation: "logging.googleapis.com/sourceLocation",
+	})
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+		// ※実装に合わせて設定してください
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// オーバーライドしたキー名でJSONが出力されているか確認
+	if !strings.Contains(s, `"logging.googleapis.com/trace":"trace-123"`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/spanId":"span-456"`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/sourceLocation":{`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}
+
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -480,6 +523,53 @@ func TestTextFormatter_Masking(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTextFormatter_OverrideKeys verifies that specific keys can be customized in TextFormatter.
+func TestTextFormatter_OverrideKeys(t *testing.T) {
+	// IMPORTANT: Intended for non-TTY environments
+	t.Setenv("HARELOG_NO_COLOR", "1")
+
+	var f Formatter = Text.NewFormatter()
+
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			FieldKeyTraceID:        "custom.trace",
+			FieldKeySpanID:         "custom.spanId",
+			FieldKeySourceLocation: "custom.source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "text key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// textFormatterは `{ }` で囲まれ、イコール(=)で結合される
+	if !strings.Contains(s, `custom.trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `custom.spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	// "main.go:42" は特殊文字を含まないためクォートされない
+	if !strings.Contains(s, `custom.source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
 	}
 }
 
@@ -916,6 +1006,52 @@ func TestConsoleFormatter_Masking(t *testing.T) {
 	}
 }
 
+// TestConsoleFormatter_OverrideKeys verifies that specific keys can be customized in ConsoleFormatter.
+func TestConsoleFormatter_OverrideKeys(t *testing.T) {
+	// IMPORTANT: Intended for non-TTY environments
+	t.Setenv("HARELOG_NO_COLOR", "1")
+
+	var f Formatter = Console.NewFormatter()
+
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			FieldKeyTraceID:        "dev.trace",
+			FieldKeySpanID:         "dev.spanId",
+			FieldKeySourceLocation: "dev.source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "console key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// consoleFormatterも `{ }` で囲まれ、イコール(=)で結合される
+	if !strings.Contains(s, `dev.trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `dev.spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `dev.source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}
+
 // TestLogfmtFormatter_Format verifies the behavior of the logfmtFormatter.
 func TestLogfmtFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -1202,6 +1338,52 @@ func TestLogfmtFormatter_Masking(t *testing.T) {
 	}
 }
 
+// TestLogfmtFormatter_OverrideKeys verifies that specific logfmt keys can be customized.
+func TestLogfmtFormatter_OverrideKeys(t *testing.T) {
+	t.Parallel()
+
+	var f Formatter = Logfmt.NewFormatter()
+
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			// logfmt用にわかりやすいカスタムキー名でテスト
+			FieldKeyTraceID:        "custom_trace",
+			FieldKeySpanID:         "custom_spanId",
+			FieldKeySourceLocation: "custom_source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "logfmt key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// jsonと違い、イコール(=)で結合され、クォートなしで出力されているかを確認
+	if !strings.Contains(s, `custom_trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `custom_spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `custom_source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}
+
 // --- Benchmark Setup ---
 
 // benchmarkTime is a fixed time shared across all benchmarks.
@@ -1447,48 +1629,5 @@ func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
-	}
-}
-
-// TestJSONFormatter_OverrideKeys verifies that specific JSON keys can be customized.
-func TestJSONFormatter_OverrideKeys(t *testing.T) {
-	t.Parallel()
-
-	f := JSON.NewFormatter()
-
-	// New()内で行われる事後処理（インターフェースによる遅延適用）をシミュレート
-	f.OverrideKeys(map[string]string{
-		FieldKeyTraceID:        "logging.googleapis.com/trace",
-		FieldKeySpanID:         "logging.googleapis.com/spanId",
-		FieldKeyTraceSampled:   "logging.googleapis.com/trace_sampled",
-		FieldKeySourceLocation: "logging.googleapis.com/sourceLocation",
-	})
-
-	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	entry := &LogEntry{
-		Message:        "key override test",
-		Severity:       LogLevelInfo,
-		Time:           testTime,
-		TraceID:        "trace-123",
-		SpanID:         "span-456",
-		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
-		// ※実装に合わせて設定してください
-	}
-
-	b, err := f.Format(entry)
-	if err != nil {
-		t.Fatalf("Format() returned an error: %v", err)
-	}
-	s := string(b)
-
-	// オーバーライドしたキー名でJSONが出力されているか確認
-	if !strings.Contains(s, `"logging.googleapis.com/trace":"trace-123"`) {
-		t.Errorf("output missing overridden trace id: %s", s)
-	}
-	if !strings.Contains(s, `"logging.googleapis.com/spanId":"span-456"`) {
-		t.Errorf("output missing overridden span id: %s", s)
-	}
-	if !strings.Contains(s, `"logging.googleapis.com/sourceLocation":{`) {
-		t.Errorf("output missing overridden source location: %s", s)
 	}
 }
