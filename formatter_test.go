@@ -348,12 +348,12 @@ func TestTextFormatter_Format(t *testing.T) {
 					Time:     testTime,
 					TraceID:  "trace-A", // This one should be written
 					Payload: map[string]interface{}{
-						"userID": "user-123",
-						"trace":  "trace-B", // This one should be skipped
+						"userID":  "user-123",
+						"traceId": "trace-B", // This one should be skipped
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace=trace-A, userID=user-123 }`,
+				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { traceId=trace-B, userID=user-123 }`,
 			},
 		}
 
@@ -1135,12 +1135,12 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Time:     testTime,
 				TraceID:  "trace-A", // This one should be written
 				Payload: map[string]interface{}{
-					"userID": "user-123",
-					"trace":  "trace-B", // This one should be skipped
+					"userID":  "user-123",
+					"traceId": "trace-B", // This one should be skipped
 				},
 			},
 			// StructFields (trace=trace-A) が Payload (trace=trace-B) より優先される
-			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" trace=trace-A userID=user-123`,
+			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" traceId=trace-B userID=user-123`,
 		},
 		{
 			name: "Payload requiring quotes (logfmt specific)",

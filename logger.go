@@ -66,6 +66,15 @@ const (
 	SourceLocationModeErrorOrAbove
 )
 
+const (
+	FieldKeyTraceID        = "traceId"
+	FieldKeySpanID         = "spanId"
+	FieldKeyTraceSampled   = "traceSampled"
+	FieldKeyHTTPRequest    = "httpRequest"
+	FieldKeySourceLocation = "sourceLocation"
+	FieldKeyCorrelationID  = "correlationID"
+)
+
 var (
 	std      = New()
 	stdMutex = &sync.RWMutex{}
@@ -221,27 +230,55 @@ func (e *LogEntry) applyKVs(kvs ...interface{}) {
 			continue
 		}
 
+		val := kvs[i+1]
+
 		switch key {
+		// --- 1. Truncation Group (Protect Core Fields) ---
+		case "message", "severity", "timestamp", FieldKeyTraceSampled:
+			continue
+
 		case "error":
-			if err, ok := kvs[i+1].(error); ok {
+			if err, ok := val.(error); ok {
 				e.Payload[key] = err.Error()
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
-		case "httpRequest":
-			if req, ok := kvs[i+1].(*HTTPRequest); ok {
+
+		// --- 2. Promotion & Fallback Group (Extended Fields) ---
+		case FieldKeyTraceID:
+			if s, ok := val.(string); ok {
+				e.TraceID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeySpanID:
+			if s, ok := val.(string); ok {
+				e.SpanID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeyCorrelationID:
+			if s, ok := val.(string); ok {
+				e.CorrelationID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeyHTTPRequest:
+			if req, ok := val.(*HTTPRequest); ok {
 				e.HTTPRequest = req
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
-		case "sourceLocation":
-			if sl, ok := kvs[i+1].(*SourceLocation); ok {
+		case FieldKeySourceLocation:
+			if sl, ok := val.(*SourceLocation); ok {
 				e.SourceLocation = sl
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
+
+		// --- 3. Other Optional User Data ---
 		default:
-			e.Payload[key] = kvs[i+1]
+			e.Payload[key] = val
 		}
 	}
 }
