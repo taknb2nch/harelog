@@ -40,13 +40,9 @@ var jsonEntryPool = sync.Pool{
 }
 
 type jsonEntry struct {
-	Message        string          `json:"message"`
-	Severity       LogLevel        `json:"severity,omitempty"`
-	Trace          string          `json:"logging.googleapis.com/trace,omitempty"`
-	SpanID         string          `json:"logging.googleapis.com/spanId,omitempty"`
-	TraceSampled   *bool           `json:"logging.googleapis.com/trace_sampled,omitempty"`
-	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
-	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
+	Message     string       `json:"message"`
+	Severity    LogLevel     `json:"severity,omitempty"`
+	HTTPRequest *HTTPRequest `json:"httpRequest,omitempty"`
 
 	Time   time.Time         `json:"timestamp,omitempty"`
 	Labels map[string]string `json:"labels,omitempty"`
@@ -58,11 +54,7 @@ type jsonEntry struct {
 func (e *jsonEntry) Clear() {
 	e.Message = ""
 	e.Severity = ""
-	e.Trace = ""
-	e.SpanID = ""
-	e.TraceSampled = nil
 	e.HTTPRequest = nil
-	e.SourceLocation = nil
 	e.Time = time.Time{}
 	// e.Labels = nil // Set to nil, as it's a reference
 	e.CorrelationID = ""
@@ -74,6 +66,11 @@ func (e *jsonEntry) Clear() {
 type Formatter interface {
 	Format(entry *LogEntry) ([]byte, error)
 	FormatMessageOnly(entry *LogEntry) ([]byte, error)
+}
+
+// KeyOverrider is implemented by formatters that support overriding default log key names.
+type KeyOverrider interface {
+	OverrideKeys(overrides map[string]string)
 }
 
 var JSON = jsonOptions{}
@@ -99,7 +96,12 @@ func (jsonOptions) WithMaskingKeysIgnoreCase(keys ...string) JSONFormatterOption
 
 // NewJSONFormatter creates a new JSONFormatter.
 func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
-	formatter := &jsonFormatter{}
+	formatter := &jsonFormatter{
+		traceKeyBytes:          []byte(`,"traceId":"`),
+		spanIDKeyBytes:         []byte(`,"spanId":"`),
+		traceSampledKeyBytes:   []byte(`,"traceSampled":`),
+		sourceLocationKeyBytes: []byte(`,"sourceLocation":`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -111,11 +113,11 @@ func (jsonOptions) NewFormatter(opts ...JSONFormatterOption) *jsonFormatter {
 // jsonFormatter formats log entries as JSON.
 type jsonFormatter struct {
 	maskingCore
-}
 
-// Deprecated: Use harelog.JSON.NewFormatter instead.
-func NewJSONFormatter() *jsonFormatter {
-	return JSON.NewFormatter()
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Format converts a logEntry to JSON format.
@@ -141,38 +143,134 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	head.Message = e.Message
 	head.Severity = e.Severity
-	head.Trace = e.Trace
-	head.SpanID = e.SpanID
-	head.TraceSampled = e.TraceSampled
-	head.HTTPRequest = e.HTTPRequest
-	head.SourceLocation = e.SourceLocation
 	head.Time = e.Time
 	head.Labels = e.Labels
-	head.CorrelationID = e.CorrelationID
+
+	if e.HTTPRequest != nil {
+		if _, ok := e.Payload[FieldKeyHTTPRequest]; !ok {
+			head.HTTPRequest = e.HTTPRequest
+		}
+	}
 
 	headerBytes, err := json.Marshal(head)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(e.Payload) == 0 {
-		return headerBytes, nil
+	var payloadBytes []byte
+
+	if len(e.Payload) > 0 {
+		payloadBytes, err = json.Marshal(e.Payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	payloadBytes, err := json.Marshal(e.Payload)
-	if err != nil {
-		return nil, err
+	growSize := len(headerBytes)
+
+	if e.TraceID != "" {
+		if _, ok := e.Payload[FieldKeyTraceID]; !ok {
+			growSize += len(f.traceKeyBytes) + len(e.TraceID) + 1
+		}
 	}
 
-	if len(headerBytes) <= 2 {
-		return payloadBytes, nil
+	if e.SpanID != "" {
+		if _, ok := e.Payload[FieldKeySpanID]; !ok {
+			growSize += len(f.spanIDKeyBytes) + len(e.SpanID) + 1
+		}
 	}
 
-	out := headerBytes[:len(headerBytes)-1]
-	out = append(out, ',')
-	out = append(out, payloadBytes[1:]...)
+	if e.TraceSampled != nil {
+		growSize += len(f.traceSampledKeyBytes) + 5 // true or false
+	}
 
-	return out, nil
+	var sourceLocationLineBytes []byte
+	var scratch [64]byte
+
+	if e.SourceLocation != nil {
+		if _, ok := e.Payload[FieldKeySourceLocation]; !ok {
+			sourceLocationLineBytes = strconv.AppendInt(scratch[:0], int64(e.SourceLocation.Line), 10)
+
+			growSize += len(f.sourceLocationKeyBytes)
+			growSize += len(`{"file":"`)
+			growSize += len(e.SourceLocation.File)
+			growSize += len(`{"line:"`)
+			growSize += len(sourceLocationLineBytes)
+			growSize += len(`,"function":"`)
+			growSize += len(e.SourceLocation.Function)
+			growSize += 2
+		}
+	}
+
+	if e.CorrelationID != "" {
+		if _, ok := e.Payload[FieldKeyCorrelationID]; !ok {
+			growSize += len("correlationId") + len(e.CorrelationID) + 1
+		}
+	}
+
+	if len(payloadBytes) > 2 {
+		growSize += len(payloadBytes) - 1
+	}
+
+	var b bytes.Buffer
+
+	b.Grow(growSize)
+
+	b.Write(headerBytes[:len(headerBytes)-1])
+
+	if e.TraceID != "" {
+		if _, ok := e.Payload[FieldKeyTraceID]; !ok {
+			b.Write(f.traceKeyBytes)
+			b.WriteString(e.TraceID)
+			b.WriteByte('"')
+		}
+	}
+
+	if e.SpanID != "" {
+		if _, ok := e.Payload[FieldKeySpanID]; !ok {
+			b.Write(f.spanIDKeyBytes)
+			b.WriteString(e.SpanID)
+			b.WriteByte('"')
+		}
+	}
+
+	if e.TraceSampled != nil {
+		b.Write(f.traceSampledKeyBytes)
+		b.Write(strconv.AppendBool(scratch[:0], *e.TraceSampled))
+	}
+
+	if e.SourceLocation != nil {
+		if _, ok := e.Payload[FieldKeySourceLocation]; !ok {
+			b.Write(f.sourceLocationKeyBytes)
+			b.WriteString(`{"file":"`)
+			b.WriteString(e.SourceLocation.File)
+			b.WriteString(`","line":`)
+			b.Write(sourceLocationLineBytes)
+			b.WriteString(`,"function":"`)
+			b.WriteString(e.SourceLocation.Function)
+			b.WriteString(`"}`)
+		}
+	}
+
+	if e.CorrelationID != "" {
+		if _, ok := e.Payload[FieldKeyCorrelationID]; !ok {
+			b.WriteString(`,"correlationId":"`)
+			b.WriteString(e.CorrelationID)
+			b.WriteByte('"')
+		}
+	}
+
+	if len(payloadBytes) > 2 {
+		if len(headerBytes) > 2 || e.TraceID != "" || e.SpanID != "" || e.TraceSampled != nil || e.SourceLocation != nil {
+			b.WriteByte(',')
+		}
+
+		b.Write(payloadBytes[1 : len(payloadBytes)-1])
+	}
+
+	b.WriteByte('}')
+
+	return b.Bytes(), nil
 }
 
 // FormatMessageOnly formats only the timestamp, severity, and message fields into logfmt format.
@@ -191,6 +289,23 @@ func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func (f *jsonFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = []byte(`,"` + v + `":"`)
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = []byte(`,"` + v + `":`)
+		default:
+			// do nothing
+		}
+	}
+}
+
 var Text = textOptions{}
 
 // TextFormatterOption is a functional option for configuring a TextFormatter.
@@ -200,7 +315,12 @@ type textOptions struct{}
 
 // NewTextFormatter creates a new TextFormatter.
 func (textOptions) NewFormatter(opts ...TextFormatterOption) *textFormatter {
-	formatter := &textFormatter{}
+	formatter := &textFormatter{
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -212,11 +332,10 @@ func (textOptions) NewFormatter(opts ...TextFormatterOption) *textFormatter {
 // textFormatter formats log entries as human-readable text.
 type textFormatter struct {
 	maskingCore
-}
-
-// Deprecated: Use harelog.Text.NewFormatter instead.
-func NewTextFormatter() *textFormatter {
-	return Text.NewFormatter()
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Format converts a logEntry to a single-line text format.
@@ -244,13 +363,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		b.Truncate(len(buf) - 1)
 	}
 
-	isSource := false
-	isTrace := false
-	isSpanID := false
-	isCorrelationId := false
-	isHttpRequest := false
-	isLabel := false
-	isPayload := false
+	startLen := b.Len()
 
 	b.WriteByte(' ')
 	b.WriteByte('{')
@@ -258,9 +371,9 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	// Add special fields if they exist and are not already in the payload
 	if e.SourceLocation != nil {
-		if _, ok := e.Payload["sourceLocation"]; !ok {
+		if _, ok := e.Payload[FieldKeySourceLocation]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -277,69 +390,65 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isSource = true
 		}
 	}
 
-	if e.Trace != "" {
-		b.WriteString("trace")
-		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isTrace = true
+	if e.TraceID != "" {
+		if _, ok := e.Payload[FieldKeyTraceID]; !ok {
+			b.Write(f.traceKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.TraceID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.SpanID)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isSpanID = true
+		if _, ok := e.Payload[FieldKeySpanID]; !ok {
+			b.Write(f.spanIDKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.SpanID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.CorrelationID != "" {
-		b.WriteString("correlationId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.CorrelationID)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isCorrelationId = true
+		if _, ok := e.Payload[FieldKeyCorrelationID]; !ok {
+			b.WriteString("correlationId")
+			b.WriteByte('=')
+			appendStringValue(&b, e.CorrelationID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.HTTPRequest != nil {
-		// Extract the most useful parts of the HTTP request
-		if e.HTTPRequest.RequestMethod != "" {
-			b.WriteString("http.method")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestMethod)
-			b.WriteByte(',')
-			b.WriteByte(' ')
+		if _, ok := e.Payload[FieldKeyHTTPRequest]; !ok {
+			// Extract the most useful parts of the HTTP request
+			if e.HTTPRequest.RequestMethod != "" {
+				b.WriteString("http.method")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestMethod)
+				b.WriteByte(',')
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.Status != 0 {
-			b.WriteString("http.status")
-			b.WriteByte('=')
-			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
-			b.WriteString(",")
-			b.WriteByte(' ')
+			if e.HTTPRequest.Status != 0 {
+				b.WriteString("http.status")
+				b.WriteByte('=')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+				b.WriteString(",")
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.RequestURL != "" {
-			b.WriteString("http.url")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestURL)
-			b.WriteByte(',')
-			b.WriteByte(' ')
-
-			isHttpRequest = true
+			if e.HTTPRequest.RequestURL != "" {
+				b.WriteString("http.url")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestURL)
+				b.WriteByte(',')
+				b.WriteByte(' ')
+			}
 		}
 	}
 
@@ -366,8 +475,6 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isLabel = true
 		}
 	}
 
@@ -381,22 +488,6 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 		sort.Strings(keys)
 
 		for _, key := range keys {
-			if isTrace && key == "trace" {
-				continue
-			}
-
-			if isSpanID && key == "spanId" {
-				continue
-			}
-
-			if isCorrelationId && key == "correlationId" {
-				continue
-			}
-
-			if isHttpRequest && key == "httpRequest" {
-				continue
-			}
-
 			b.WriteString(key)
 			b.WriteString("=")
 
@@ -439,20 +530,15 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isPayload = true
 		}
 	}
 
-	buf = b.Bytes()
-
-	if isSource || isTrace || isSpanID || isCorrelationId || isHttpRequest || isLabel || isPayload {
-		b.Truncate(len(buf) - 2)
+	if b.Len() > startLen+3 {
+		b.Truncate(b.Len() - 2)
 		b.WriteByte(' ')
 		b.WriteByte('}')
 	} else {
-		// space }
-		b.Truncate(len(buf) - 3)
+		b.Truncate(startLen)
 	}
 
 	return b.Bytes(), nil
@@ -462,6 +548,25 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 // This is used internally by the logger to output warnings about invalid keys.
 func (f *textFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return formatBasicMessage(e), nil
+}
+
+func (f *textFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
 }
 
 func formatBasicMessage(e *LogEntry) []byte {
@@ -530,9 +635,13 @@ type consoleOptions struct{}
 // NewConsoleFormatter creates a new ConsoleFormatter.
 func (consoleOptions) NewFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
 	formatter := &consoleFormatter{
-		enableColor:      false,
-		isEnableColorSet: false,
-		highlightColors:  make(map[string]*color.Color),
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+		enableColor:            false,
+		isEnableColorSet:       false,
+		highlightColors:        make(map[string]*color.Color),
 	}
 
 	for _, opt := range opts {
@@ -605,28 +714,17 @@ func (consoleOptions) WithMaskingKeysIgnoreCase(keys ...string) ConsoleFormatter
 // It supports highlighting specific key-value pairs to improve readability.
 type consoleFormatter struct {
 	maskingCore
-	enableColor      bool
-	isEnableColorSet bool
-	highlightColors  map[string]*color.Color
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
+	enableColor            bool
+	isEnableColorSet       bool
+	highlightColors        map[string]*color.Color
 }
 
 // ConsoleFormatterOption is a functional option for configuring a ConsoleFormatter.
 type ConsoleFormatterOption func(*consoleFormatter)
-
-// Deprecated: Use harelog.Console.NewFormatter instead.
-func NewConsoleFormatter(opts ...ConsoleFormatterOption) *consoleFormatter {
-	return Console.NewFormatter(opts...)
-}
-
-// Deprecated: Use harelog.Console.WithLogLevelColor instead.
-func WithLogLevelColor(enabled bool) ConsoleFormatterOption {
-	return Console.WithLogLevelColor(enabled)
-}
-
-// Deprecated: Use harelog.Console.WithKeyHighlight instead.
-func WithKeyHighlight(key string, attrs ...ColorAttribute) ConsoleFormatterOption {
-	return Console.WithKeyHighlight(key, attrs...)
-}
 
 // Format overrides the default TextFormatter's field formatting to add highlighting.
 func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
@@ -670,13 +768,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		b.Truncate(len(buf) - 1)
 	}
 
-	isSource := false
-	isTrace := false
-	isSpanID := false
-	isCorrelationId := false
-	isHttpRequest := false
-	isLabel := false
-	isPayload := false
+	startLen := b.Len()
 
 	b.WriteByte(' ')
 	b.WriteByte('{')
@@ -684,9 +776,9 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	// Add special fields if they exist and are not already in the payload
 	if e.SourceLocation != nil {
-		if _, ok := e.Payload["sourceLocation"]; !ok {
+		if _, ok := e.Payload[FieldKeySourceLocation]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -703,69 +795,65 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isSource = true
 		}
 	}
 
-	if e.Trace != "" {
-		b.WriteString("trace")
-		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isTrace = true
+	if e.TraceID != "" {
+		if _, ok := e.Payload[FieldKeyTraceID]; !ok {
+			b.Write(f.traceKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.TraceID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.SpanID)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isSpanID = true
+		if _, ok := e.Payload[FieldKeySpanID]; !ok {
+			b.Write(f.spanIDKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.SpanID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.CorrelationID != "" {
-		b.WriteString("correlationId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.CorrelationID)
-		b.WriteByte(',')
-		b.WriteByte(' ')
-
-		isCorrelationId = true
+		if _, ok := e.Payload[FieldKeyCorrelationID]; !ok {
+			b.WriteString("correlationId")
+			b.WriteByte('=')
+			appendStringValue(&b, e.CorrelationID)
+			b.WriteByte(',')
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.HTTPRequest != nil {
-		// Extract the most useful parts of the HTTP request
-		if e.HTTPRequest.RequestMethod != "" {
-			b.WriteString("http.method")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestMethod)
-			b.WriteByte(',')
-			b.WriteByte(' ')
+		if _, ok := e.Payload[FieldKeyHTTPRequest]; !ok {
+			// Extract the most useful parts of the HTTP request
+			if e.HTTPRequest.RequestMethod != "" {
+				b.WriteString("http.method")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestMethod)
+				b.WriteByte(',')
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.Status != 0 {
-			b.WriteString("http.status")
-			b.WriteByte('=')
-			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
-			b.WriteString(",")
-			b.WriteByte(' ')
+			if e.HTTPRequest.Status != 0 {
+				b.WriteString("http.status")
+				b.WriteByte('=')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+				b.WriteString(",")
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.RequestURL != "" {
-			b.WriteString("http.url")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestURL)
-			b.WriteByte(',')
-			b.WriteByte(' ')
-
-			isHttpRequest = true
+			if e.HTTPRequest.RequestURL != "" {
+				b.WriteString("http.url")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestURL)
+				b.WriteByte(',')
+				b.WriteByte(' ')
+			}
 		}
 	}
 
@@ -792,8 +880,6 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isLabel = true
 		}
 	}
 
@@ -807,22 +893,6 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 		sort.Strings(keys)
 
 		for _, key := range keys {
-			if isTrace && key == "trace" {
-				continue
-			}
-
-			if isSpanID && key == "spanId" {
-				continue
-			}
-
-			if isCorrelationId && key == "correlationId" {
-				continue
-			}
-
-			if isHttpRequest && key == "httpRequest" {
-				continue
-			}
-
 			b2.Reset()
 
 			switch val := e.Payload[key].(type) {
@@ -881,20 +951,15 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 			b.WriteByte(',')
 			b.WriteByte(' ')
-
-			isPayload = true
 		}
 	}
 
-	buf = b.Bytes()
-
-	if isSource || isTrace || isSpanID || isCorrelationId || isHttpRequest || isLabel || isPayload {
-		b.Truncate(len(buf) - 2)
+	if b.Len() > startLen+3 {
+		b.Truncate(b.Len() - 2)
 		b.WriteByte(' ')
 		b.WriteByte('}')
 	} else {
-		// space }
-		b.Truncate(len(buf) - 3)
+		b.Truncate(startLen)
 	}
 
 	return b.Bytes(), nil
@@ -902,6 +967,25 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 func (f *consoleFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	return formatBasicMessage(e), nil
+}
+
+func (f *consoleFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
 }
 
 // should UseColor determines if color should be used for the output.
@@ -979,7 +1063,12 @@ func (logfmtOptions) WithMaskingKeysIgnoreCase(keys ...string) LogfmtFormatterOp
 
 // NewLogfmtFormatter creates a new LogfmtFormatter.
 func (logfmtOptions) NewFormatter(opts ...LogfmtFormatterOption) *logfmtFormatter {
-	formatter := &logfmtFormatter{}
+	formatter := &logfmtFormatter{
+		traceKeyBytes:          []byte(`trace`),
+		spanIDKeyBytes:         []byte(`spanId`),
+		traceSampledKeyBytes:   []byte(`traceSampled`),
+		sourceLocationKeyBytes: []byte(`source`),
+	}
 
 	for _, opt := range opts {
 		opt(formatter)
@@ -994,11 +1083,11 @@ func (logfmtOptions) NewFormatter(opts ...LogfmtFormatterOption) *logfmtFormatte
 // Values containing spaces, '=', or '"' characters will be double-quoted.
 type logfmtFormatter struct {
 	maskingCore
-}
 
-// Deprecated: Use harelog.Logfmt.NewFormatter instead.
-func NewLogfmtFormatter() *logfmtFormatter {
-	return Logfmt.NewFormatter()
+	traceKeyBytes          []byte
+	spanIDKeyBytes         []byte
+	traceSampledKeyBytes   []byte
+	sourceLocationKeyBytes []byte
 }
 
 // Format converts a logEntry into a byte slice formatted as logfmt.
@@ -1029,16 +1118,11 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	b.WriteByte(' ')
 
-	isTrace := false
-	isSpanID := false
-	isCorrelationId := false
-	isHttpRequest := false
-
 	// Add special fields if they exist and are not already in the payload
 	if e.SourceLocation != nil {
-		if _, ok := e.Payload["sourceLocation"]; !ok {
+		if _, ok := e.Payload[FieldKeySourceLocation]; !ok {
 			// Format source location for readability
-			b.WriteString("source")
+			b.Write(f.sourceLocationKeyBytes)
 			b.WriteByte('=')
 
 			if needsQuoting(e.SourceLocation.File) {
@@ -1057,58 +1141,56 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 		}
 	}
 
-	if e.Trace != "" {
-		b.WriteString("trace")
-		b.WriteByte('=')
-		appendStringValue(&b, e.Trace)
-		b.WriteByte(' ')
-
-		isTrace = true
+	if e.TraceID != "" {
+		if _, ok := e.Payload[FieldKeyTraceID]; !ok {
+			b.Write(f.traceKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.TraceID)
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.SpanID != "" {
-		b.WriteString("spanId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.SpanID)
-		b.WriteByte(' ')
-
-		isSpanID = true
+		if _, ok := e.Payload[FieldKeySpanID]; !ok {
+			b.Write(f.spanIDKeyBytes)
+			b.WriteByte('=')
+			appendStringValue(&b, e.SpanID)
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.CorrelationID != "" {
-		b.WriteString("correlationId")
-		b.WriteByte('=')
-		appendStringValue(&b, e.CorrelationID)
-		b.WriteByte(' ')
-
-		isCorrelationId = true
+		if _, ok := e.Payload[FieldKeyCorrelationID]; !ok {
+			b.WriteString("correlationId")
+			b.WriteByte('=')
+			appendStringValue(&b, e.CorrelationID)
+			b.WriteByte(' ')
+		}
 	}
 
 	if e.HTTPRequest != nil {
-		// Extract the most useful parts of the HTTP request
-		if e.HTTPRequest.RequestMethod != "" {
-			b.WriteString("http.method")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestMethod)
-			b.WriteByte(' ')
+		if _, ok := e.Payload[FieldKeyHTTPRequest]; !ok {
+			// Extract the most useful parts of the HTTP request
+			if e.HTTPRequest.RequestMethod != "" {
+				b.WriteString("http.method")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestMethod)
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.Status != 0 {
-			b.WriteString("http.status")
-			b.WriteByte('=')
-			b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
-			b.WriteByte(' ')
+			if e.HTTPRequest.Status != 0 {
+				b.WriteString("http.status")
+				b.WriteByte('=')
+				b.Write(strconv.AppendInt(scratch[:0], int64(e.HTTPRequest.Status), 10))
+				b.WriteByte(' ')
+			}
 
-			isHttpRequest = true
-		}
-		if e.HTTPRequest.RequestURL != "" {
-			b.WriteString("http.url")
-			b.WriteByte('=')
-			appendStringValue(&b, e.HTTPRequest.RequestURL)
-			b.WriteByte(' ')
-
-			isHttpRequest = true
+			if e.HTTPRequest.RequestURL != "" {
+				b.WriteString("http.url")
+				b.WriteByte('=')
+				appendStringValue(&b, e.HTTPRequest.RequestURL)
+				b.WriteByte(' ')
+			}
 		}
 	}
 
@@ -1147,22 +1229,6 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 		sort.Strings(keys)
 
 		for _, key := range keys {
-			if isTrace && key == "trace" {
-				continue
-			}
-
-			if isSpanID && key == "spanId" {
-				continue
-			}
-
-			if isCorrelationId && key == "correlationId" {
-				continue
-			}
-
-			if isHttpRequest && key == "httpRequest" {
-				continue
-			}
-
 			b.WriteString(key)
 			b.WriteString("=")
 
@@ -1238,4 +1304,23 @@ func (f *logfmtFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	appendStringValue(&b, e.Message)
 
 	return b.Bytes(), nil
+}
+
+func (f *logfmtFormatter) OverrideKeys(overrides map[string]string) {
+	for k, v := range overrides {
+		val := []byte(v)
+
+		switch k {
+		case FieldKeyTraceID:
+			f.traceKeyBytes = val
+		case FieldKeySpanID:
+			f.spanIDKeyBytes = val
+		case FieldKeyTraceSampled:
+			f.traceSampledKeyBytes = val
+		case FieldKeySourceLocation:
+			f.sourceLocationKeyBytes = val
+		default:
+			// do nothing
+		}
+	}
 }

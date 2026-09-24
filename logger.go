@@ -66,6 +66,15 @@ const (
 	SourceLocationModeErrorOrAbove
 )
 
+const (
+	FieldKeyTraceID        = "traceId"
+	FieldKeySpanID         = "spanId"
+	FieldKeyTraceSampled   = "traceSampled"
+	FieldKeyHTTPRequest    = "httpRequest"
+	FieldKeySourceLocation = "sourceLocation"
+	FieldKeyCorrelationID  = "correlationID"
+)
+
 var (
 	std      = New()
 	stdMutex = &sync.RWMutex{}
@@ -154,36 +163,35 @@ type HTTPRequest struct {
 
 // SourceLocation represents the location in the source code where a log entry was generated.
 type SourceLocation struct {
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Function string `json:"function,omitempty"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Function string `json:"function"`
 }
 
 // --- Log Entry Structure ---
 
 // LogEntry is the internal data container for a single log entry.
 type LogEntry struct {
-	Message        string          `json:"message"`
-	Severity       LogLevel        `json:"severity,omitempty"`
-	Trace          string          `json:"logging.googleapis.com/trace,omitempty"`
-	SpanID         string          `json:"logging.googleapis.com/spanId,omitempty"`
-	TraceSampled   *bool           `json:"logging.googleapis.com/trace_sampled,omitempty"`
-	HTTPRequest    *HTTPRequest    `json:"httpRequest,omitempty"`
-	SourceLocation *SourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
+	Message        string
+	Severity       LogLevel
+	TraceID        string
+	SpanID         string
+	TraceSampled   *bool
+	HTTPRequest    *HTTPRequest
+	SourceLocation *SourceLocation
+	CorrelationID  string
 
-	Time   time.Time         `json:"timestamp,omitempty"`
-	Labels map[string]string `json:"labels,omitempty"`
-
-	CorrelationID string `json:"correlationId,omitempty"`
+	Time   time.Time
+	Labels map[string]string
 
 	// Any fields you want to output as `jsonPayload` are stored in this map.
-	Payload map[string]interface{} `json:"-"`
+	Payload map[string]interface{}
 }
 
 func (e *LogEntry) Clear() {
 	e.Message = ""
 	e.Severity = ""
-	e.Trace = ""
+	e.TraceID = ""
 	e.SpanID = ""
 	e.TraceSampled = nil
 	e.HTTPRequest = nil
@@ -222,52 +230,80 @@ func (e *LogEntry) applyKVs(kvs ...interface{}) {
 			continue
 		}
 
+		val := kvs[i+1]
+
 		switch key {
+		// --- 1. Truncation Group (Protect Core Fields) ---
+		case "message", "severity", "timestamp", FieldKeyTraceSampled:
+			continue
+
 		case "error":
-			if err, ok := kvs[i+1].(error); ok {
+			if err, ok := val.(error); ok {
 				e.Payload[key] = err.Error()
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
-		case "httpRequest":
-			if req, ok := kvs[i+1].(*HTTPRequest); ok {
+
+		// --- 2. Promotion & Fallback Group (Extended Fields) ---
+		case FieldKeyTraceID:
+			if s, ok := val.(string); ok {
+				e.TraceID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeySpanID:
+			if s, ok := val.(string); ok {
+				e.SpanID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeyCorrelationID:
+			if s, ok := val.(string); ok {
+				e.CorrelationID = s
+			} else {
+				e.Payload[key] = val
+			}
+		case FieldKeyHTTPRequest:
+			if req, ok := val.(*HTTPRequest); ok {
 				e.HTTPRequest = req
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
-		case "sourceLocation":
-			if sl, ok := kvs[i+1].(*SourceLocation); ok {
+		case FieldKeySourceLocation:
+			if sl, ok := val.(*SourceLocation); ok {
 				e.SourceLocation = sl
 			} else {
-				e.Payload[key] = kvs[i+1]
+				e.Payload[key] = val
 			}
+
+		// --- 3. Other Optional User Data ---
 		default:
-			e.Payload[key] = kvs[i+1]
+			e.Payload[key] = val
 		}
 	}
 }
 
 // --- Logger ---
+type EntryModifier func(e *LogEntry)
 
 // Logger is a structured logger that provides leveled logging.
 // Instances of Logger are safe for concurrent use.
 type Logger struct {
 	out                io.Writer
-	trace              string
-	spanId             string
+	traceID            string
+	spanID             string
 	traceSampled       *bool
 	labels             map[string]string
 	logLevel           atomic.Uint32
 	prefix             string
 	correlationID      string
-	projectID          string
 	sourceLocationMode sourceLocationMode
 
 	payload map[string]interface{}
 
-	traceContextKey interface{}
-
 	formatter Formatter
+
+	entryModifiers []EntryModifier
 
 	// for hooks
 	hookBufferSize int
@@ -277,6 +313,8 @@ type Logger struct {
 	hookWg         sync.WaitGroup
 
 	outMutex sync.Mutex
+
+	keyOverrides map[string]string
 }
 
 // New creates a new Logger with default settings.
@@ -284,24 +322,30 @@ type Logger struct {
 func New(opts ...Option) *Logger {
 	logger := &Logger{
 		out:                os.Stderr,
-		trace:              "",
-		spanId:             "",
+		traceID:            "",
+		spanID:             "",
 		traceSampled:       nil,
 		prefix:             "",
 		correlationID:      "",
-		projectID:          "",
 		labels:             make(map[string]string),
 		payload:            make(map[string]interface{}),
-		traceContextKey:    nil,
 		sourceLocationMode: SourceLocationModeNever,
 		formatter:          JSON.NewFormatter(),
+		entryModifiers:     []EntryModifier{},
 		hookBufferSize:     100,
+		keyOverrides:       make(map[string]string),
 	}
 
 	logger.logLevel.Store(uint32(logLevelValueInfo))
 
 	for _, opt := range opts {
 		opt(logger)
+	}
+
+	if len(logger.keyOverrides) > 0 {
+		if overridable, ok := logger.formatter.(KeyOverrider); ok {
+			overridable.OverrideKeys(logger.keyOverrides)
+		}
 	}
 
 	if len(logger.hooks) > 0 {
@@ -412,14 +456,13 @@ func (l *Logger) defensiveCopy(entry *LogEntry) *LogEntry {
 func (l *Logger) Clone() *Logger {
 	newLogger := &Logger{
 		out:                l.out,
-		trace:              l.trace,
-		spanId:             l.spanId,
+		traceID:            l.traceID,
+		spanID:             l.spanID,
 		prefix:             l.prefix,
 		correlationID:      l.correlationID,
-		projectID:          l.projectID,
-		traceContextKey:    l.traceContextKey,
 		sourceLocationMode: l.sourceLocationMode,
 		formatter:          l.formatter,
+		entryModifiers:     l.entryModifiers,
 		hooks:              l.hooks,
 		hookChan:           l.hookChan,
 	}
@@ -718,6 +761,10 @@ func (l *Logger) Fatalw(msg string, kvs ...interface{}) {
 func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) {
 	e := l.createEntry(ctx, level, msg, kvs...)
 
+	for _, modifier := range l.entryModifiers {
+		modifier(e)
+	}
+
 	if e.SourceLocation == nil && (l.sourceLocationMode == SourceLocationModeAlways ||
 		(l.sourceLocationMode == SourceLocationModeErrorOrAbove && levelMap[level] <= logLevelValueError)) {
 		e.SourceLocation = l.findCaller()
@@ -745,13 +792,13 @@ func (l *Logger) dispatch(ctx context.Context, level LogLevel, msg string, kvs .
 // It accepts a context (which can be nil) and correctly applies values with the
 // precedence: method args > logger context > context.Context.
 func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kvs ...interface{}) *LogEntry {
-	// 1. Create the base entry.
+	// Create the base entry.
 	e := logEntryPool.Get().(*LogEntry)
 
 	e.Severity = level
 	e.Message = l.prefix + msg
-	e.Trace = l.trace
-	e.SpanID = l.spanId
+	e.TraceID = l.traceID
+	e.SpanID = l.spanID
 	e.TraceSampled = l.traceSampled
 	e.CorrelationID = l.correlationID
 	e.Time = time.Now()
@@ -764,23 +811,7 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 		maps.Copy(e.Labels, l.labels)
 	}
 
-	// 2. Apply values from context.Context (lowest precedence).
-	if ctx != nil && l.projectID != "" && l.traceContextKey != nil {
-		if traceHeader, ok := ctx.Value(l.traceContextKey).(string); ok {
-			parts := strings.Split(traceHeader, "/")
-
-			if len(parts) > 0 && e.Trace == "" {
-				e.Trace = "projects/" + l.projectID + "/traces/" + parts[0]
-			}
-
-			if len(parts) > 1 && e.SpanID == "" {
-				spanParts := strings.Split(parts[1], ";")
-				e.SpanID = spanParts[0]
-			}
-		}
-	}
-
-	// 3. Apply contextual fields from the logger (With method).
+	// Apply contextual fields from the logger (With method).
 	if len(l.payload) > 0 {
 		contextKVs := make([]interface{}, 0, len(l.payload)*2)
 
@@ -791,7 +822,7 @@ func (l *Logger) createEntry(ctx context.Context, level LogLevel, msg string, kv
 		e.applyKVs(contextKVs...)
 	}
 
-	// 4. Apply key-value pairs from the specific log call (highest precedence).
+	// Apply key-value pairs from the specific log call (highest precedence).
 	if len(kvs) > 0 {
 		e.applyKVs(kvs...)
 	}
@@ -929,26 +960,6 @@ func (l *Logger) WithAutoSource(mode sourceLocationMode) *Logger {
 	return newLogger
 }
 
-// WithProjectID returns a new logger with a different Project ID.
-func (l *Logger) WithProjectID(projectID string) *Logger {
-	newLogger := l.Clone()
-	newLogger.projectID = projectID
-
-	return newLogger
-}
-
-// WithTraceContextKey returns a new logger with a different trace context key.
-func (l *Logger) WithTraceContextKey(key interface{}) *Logger {
-	if key == nil {
-		panic("harelog: nil key provided to WithTraceContextKey; context keys must be non-nil")
-	}
-
-	newLogger := l.Clone()
-	newLogger.traceContextKey = key
-
-	return newLogger
-}
-
 // WithPrefix returns a new logger instance with the specified message prefix.
 func (l *Logger) WithPrefix(prefix string) *Logger {
 	newLogger := l.Clone()
@@ -1010,18 +1021,18 @@ func (l *Logger) With(kvs ...interface{}) *Logger {
 	return newLogger
 }
 
-// WithTrace returns a new logger instance with the specified GCP trace identifier.
-func (l *Logger) WithTrace(trace string) *Logger {
+// WithTraceID returns a new logger instance with the specified GCP trace identifier.
+func (l *Logger) WithTraceID(trace string) *Logger {
 	newLogger := l.Clone()
-	newLogger.trace = trace
+	newLogger.traceID = trace
 
 	return newLogger
 }
 
-// WithSpanId returns a new logger instance with the specified GCP spanId identifier.
-func (l *Logger) WithSpanId(spanId string) *Logger {
+// WithSpanID returns a new logger instance with the specified GCP spanId identifier.
+func (l *Logger) WithSpanID(spanID string) *Logger {
 	newLogger := l.Clone()
-	newLogger.spanId = spanId
+	newLogger.spanID = spanID
 
 	return newLogger
 }
@@ -1120,7 +1131,6 @@ func SetDefaultHooks(hooks ...Hook) {
 		WithLogLevel(currentLevel),
 		WithFormatter(std.formatter),
 		WithAutoSource(std.sourceLocationMode),
-		WithProjectID(std.projectID),
 		WithPrefix(std.prefix),
 		WithLabels(std.labels),
 		WithFields(payloadKVs...),
@@ -1128,30 +1138,10 @@ func SetDefaultHooks(hooks ...Hook) {
 		WithHooks(hooks...),
 	}
 
-	// WithTraceContextKey panics on nil, so only add it if it exists.
-	if std.traceContextKey != nil {
-		opts = append(opts, WithTraceContextKey(std.traceContextKey))
-	}
 	// --- End of preserving settings ---
 
 	// Create a new logger with the new hooks, preserving all other settings.
 	std = New(opts...)
-}
-
-// WithProjectID sets the initial Google Cloud Project ID.
-func SetDefaultProjectID(projectID string) {
-	stdMutex.Lock()
-	defer stdMutex.Unlock()
-
-	std = std.WithProjectID(projectID)
-}
-
-// WithTraceContextKey sets the initial context key for tracing.
-func SetDefaultTraceContextKey(key interface{}) {
-	stdMutex.Lock()
-	defer stdMutex.Unlock()
-
-	std = std.WithTraceContextKey(key)
 }
 
 // SetDefaultPrefix sets the message prefix for the default logger.
@@ -1589,24 +1579,6 @@ func WithAutoSource(mode sourceLocationMode) Option {
 	}
 }
 
-// WithProjectID sets the Google Cloud Project ID to be used for formatting trace identifiers.
-func WithProjectID(id string) Option {
-	return func(l *Logger) {
-		l.projectID = id
-	}
-}
-
-// WithTraceContextKey sets the key used to extract Google Cloud Trace data from a context.Context.
-func WithTraceContextKey(key interface{}) Option {
-	if key == nil {
-		panic("harelog: nil key provided to WithTraceContextKey; context keys must be non-nil")
-	}
-
-	return func(l *Logger) {
-		l.traceContextKey = key
-	}
-}
-
 // WithPrefix sets the initial message prefix.
 func WithPrefix(prefix string) Option {
 	return func(l *Logger) {
@@ -1671,6 +1643,28 @@ func WithHooks(hooks ...Hook) Option {
 		l.hooks = make([]Hook, 0, len(hooks))
 
 		l.hooks = append(l.hooks, hooks...)
+	}
+}
+
+// WithEntryModifier registers an EntryModifier to modify log entries before formatting.
+func WithEntryModifier(modifier EntryModifier) Option {
+	return func(l *Logger) {
+		if modifier == nil {
+			return
+		}
+
+		l.entryModifiers = append(l.entryModifiers, modifier)
+	}
+}
+
+// WithKeyOverride sets a custom output name for a specific log key.
+func WithKeyOverride(key string, value string) Option {
+	return func(l *Logger) {
+		if key == "" || value == "" {
+			return
+		}
+
+		l.keyOverrides[key] = value
 	}
 }
 
