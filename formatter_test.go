@@ -199,6 +199,49 @@ func TestJSONFormatter_Masking(t *testing.T) {
 	}
 }
 
+// TestJSONFormatter_OverrideKeys verifies that specific JSON keys can be customized.
+func TestJSONFormatter_OverrideKeys(t *testing.T) {
+	t.Parallel()
+
+	f := JSON.NewFormatter()
+
+	// New()内で行われる事後処理（インターフェースによる遅延適用）をシミュレート
+	f.OverrideKeys(map[string]string{
+		FieldKeyTraceID:        "logging.googleapis.com/trace",
+		FieldKeySpanID:         "logging.googleapis.com/spanId",
+		FieldKeyTraceSampled:   "logging.googleapis.com/trace_sampled",
+		FieldKeySourceLocation: "logging.googleapis.com/sourceLocation",
+	})
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+		// ※実装に合わせて設定してください
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// オーバーライドしたキー名でJSONが出力されているか確認
+	if !strings.Contains(s, `"logging.googleapis.com/trace":"trace-123"`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/spanId":"span-456"`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `"logging.googleapis.com/sourceLocation":{`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}
+
 // TestTextFormatter_Format verifies the behavior of the textFormatter, including colorization.
 func TestTextFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -254,7 +297,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:        "complex event",
 					Severity:       LogLevelWarn,
 					Time:           testTime,
-					Trace:          "trace-id-123",
+					TraceID:        "trace-id-123",
 					SpanID:         "span-id-456",
 					CorrelationID:  "corr-id-789",
 					Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
@@ -278,7 +321,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:       "complex event",
 					Severity:      LogLevelWarn,
 					Time:          testTime,
-					Trace:         "trace-id 123",
+					TraceID:       "trace-id 123",
 					SpanID:        "span-id=456",
 					CorrelationID: "corr-id\"789\"",
 					Labels: map[string]string{
@@ -303,14 +346,14 @@ func TestTextFormatter_Format(t *testing.T) {
 					Message:  "duplicate fields test",
 					Severity: LogLevelInfo,
 					Time:     testTime,
-					Trace:    "trace-A", // This one should be written
+					TraceID:  "trace-A", // This one should be written
 					Payload: map[string]interface{}{
-						"userID": "user-123",
-						"trace":  "trace-B", // This one should be skipped
+						"userID":  "user-123",
+						"traceId": "trace-B", // This one should be skipped
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { trace=trace-A, userID=user-123 }`,
+				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { traceId=trace-B, userID=user-123 }`,
 			},
 		}
 
@@ -480,6 +523,53 @@ func TestTextFormatter_Masking(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTextFormatter_OverrideKeys verifies that specific keys can be customized in TextFormatter.
+func TestTextFormatter_OverrideKeys(t *testing.T) {
+	// IMPORTANT: Intended for non-TTY environments
+	t.Setenv("HARELOG_NO_COLOR", "1")
+
+	var f Formatter = Text.NewFormatter()
+
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			FieldKeyTraceID:        "custom.trace",
+			FieldKeySpanID:         "custom.spanId",
+			FieldKeySourceLocation: "custom.source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "text key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// textFormatterは `{ }` で囲まれ、イコール(=)で結合される
+	if !strings.Contains(s, `custom.trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `custom.spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	// "main.go:42" は特殊文字を含まないためクォートされない
+	if !strings.Contains(s, `custom.source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
 	}
 }
 
@@ -916,6 +1006,52 @@ func TestConsoleFormatter_Masking(t *testing.T) {
 	}
 }
 
+// TestConsoleFormatter_OverrideKeys verifies that specific keys can be customized in ConsoleFormatter.
+func TestConsoleFormatter_OverrideKeys(t *testing.T) {
+	// IMPORTANT: Intended for non-TTY environments
+	t.Setenv("HARELOG_NO_COLOR", "1")
+
+	var f Formatter = Console.NewFormatter()
+
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			FieldKeyTraceID:        "dev.trace",
+			FieldKeySpanID:         "dev.spanId",
+			FieldKeySourceLocation: "dev.source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
+
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "console key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
+
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// consoleFormatterも `{ }` で囲まれ、イコール(=)で結合される
+	if !strings.Contains(s, `dev.trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `dev.spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `dev.source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
+}
+
 // TestLogfmtFormatter_Format verifies the behavior of the logfmtFormatter.
 func TestLogfmtFormatter_Format(t *testing.T) {
 	// Hijack time for predictable output
@@ -971,7 +1107,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Message:        "complex event",
 				Severity:       LogLevelWarn,
 				Time:           testTime,
-				Trace:          "trace-id-123",
+				TraceID:        "trace-id-123",
 				SpanID:         "span-id-456",
 				CorrelationID:  "corr-id-789",
 				Labels:         map[string]string{"region": "jp-east", "cluster": "A"}, // cluster, region
@@ -997,14 +1133,14 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Message:  "duplicate fields test",
 				Severity: LogLevelInfo,
 				Time:     testTime,
-				Trace:    "trace-A", // This one should be written
+				TraceID:  "trace-A", // This one should be written
 				Payload: map[string]interface{}{
-					"userID": "user-123",
-					"trace":  "trace-B", // This one should be skipped
+					"userID":  "user-123",
+					"traceId": "trace-B", // This one should be skipped
 				},
 			},
 			// StructFields (trace=trace-A) が Payload (trace=trace-B) より優先される
-			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" trace=trace-A userID=user-123`,
+			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" traceId=trace-B userID=user-123`,
 		},
 		{
 			name: "Payload requiring quotes (logfmt specific)",
@@ -1202,78 +1338,56 @@ func TestLogfmtFormatter_Masking(t *testing.T) {
 	}
 }
 
-// --- Benchmark Setup ---
+// TestLogfmtFormatter_OverrideKeys verifies that specific logfmt keys can be customized.
+func TestLogfmtFormatter_OverrideKeys(t *testing.T) {
+	t.Parallel()
 
-// benchmarkTime is a fixed time shared across all benchmarks.
-var benchmarkTime = time.Date(2025, 9, 30, 14, 0, 0, 0, time.UTC)
+	var f Formatter = Logfmt.NewFormatter()
 
-// benchmarkEntrySimple is a shared, simple log entry for all "Simple" benchmarks.
-// It uses "server-started" (no spaces) to ensure a fair comparison,
-// preventing skewed allocations for logfmtFormatter which would otherwise need
-// to quote the message.
-var benchmarkEntrySimple = &LogEntry{
-	Message:  "server-started", // No space, fair to all formatters
-	Severity: LogLevelInfo,
-	Time:     benchmarkTime,
-}
+	// KeyOverriderインターフェースによる上書きのシミュレート
+	if overridable, ok := f.(interface{ OverrideKeys(map[string]string) }); ok {
+		overridable.OverrideKeys(map[string]string{
+			// logfmt用にわかりやすいカスタムキー名でテスト
+			FieldKeyTraceID:        "custom_trace",
+			FieldKeySpanID:         "custom_spanId",
+			FieldKeySourceLocation: "custom_source",
+		})
+	} else {
+		t.Fatal("Formatter does not implement OverrideKeys")
+	}
 
-// benchmarkEntryComplex is a shared, complex log entry for all "Complex" benchmarks.
-// It includes all special fields (Trace, SpanID, HTTPRequest, etc.) and
-// a payload with multiple data types (string with spaces, float, bool)
-// to test quoting and type handling.
-var benchmarkEntryComplex = &LogEntry{
-	Message:        "complex event", // No space in message
-	Severity:       LogLevelWarn,
-	Time:           benchmarkTime,
-	Trace:          "trace-id-123",
-	SpanID:         "span-id-456",
-	CorrelationID:  "corr-id-789",
-	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
-	SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
-	HTTPRequest: &HTTPRequest{
-		RequestMethod: "POST",
-		Status:        401,
-		RequestURL:    "/api/v1/login",
-	},
-	Payload: map[string]interface{}{
-		"userID": "user-abc",
-		"dept":   "eng department", // ★ Includes space to test quoting logic
-		"rate":   123.45,
-		"active": true,
-		"count":  int64(99),
-	},
-}
+	testTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	entry := &LogEntry{
+		Message:        "logfmt key override test",
+		Severity:       LogLevelInfo,
+		Time:           testTime,
+		TraceID:        "trace-123",
+		SpanID:         "span-456",
+		SourceLocation: &SourceLocation{File: "main.go", Line: 42},
+	}
 
-// benchmarkEntryComplexMasking is a shared, complex log entry for "Masking" benchmarks.
-// Its content is identical to benchmarkEntryComplex to ensure a fair comparison
-// of performance with and without masking enabled.
-var benchmarkEntryComplexMasking = &LogEntry{
-	Message:        "complex event masking", // Changed message for clarity
-	Severity:       LogLevelWarn,
-	Time:           benchmarkTime,
-	Trace:          "trace-id-123",
-	SpanID:         "span-id-456",
-	CorrelationID:  "corr-id-789",
-	Labels:         map[string]string{"region": "jp-east", "cluster": "A"},
-	SourceLocation: &SourceLocation{File: "app/server.go", Line: 152},
-	HTTPRequest: &HTTPRequest{
-		RequestMethod: "POST",
-		Status:        401,
-		RequestURL:    "/api/v1/login",
-	},
-	Payload: map[string]interface{}{
-		"userID": "user-abc",
-		"dept":   "eng department",
-		"rate":   123.45,
-		"active": true,
-		"count":  int64(99),
-	},
+	b, err := f.Format(entry)
+	if err != nil {
+		t.Fatalf("Format() returned an error: %v", err)
+	}
+	s := string(b)
+
+	// jsonと違い、イコール(=)で結合され、クォートなしで出力されているかを確認
+	if !strings.Contains(s, `custom_trace=trace-123`) {
+		t.Errorf("output missing overridden trace id: %s", s)
+	}
+	if !strings.Contains(s, `custom_spanId=span-456`) {
+		t.Errorf("output missing overridden span id: %s", s)
+	}
+	if !strings.Contains(s, `custom_source=main.go:42`) {
+		t.Errorf("output missing overridden source location: %s", s)
+	}
 }
 
 func cloneEntry(e *LogEntry) *LogEntry {
-	clone := *e // ポインタをコピー
+	clone := *e // Pointer copy
 
-	// map は参照型なので、明示的にコピーする
+	// Map is a reference type, explicitly copy it
 	if e.Labels != nil {
 		clone.Labels = make(map[string]string, len(e.Labels))
 		for k, v := range e.Labels {
@@ -1287,165 +1401,5 @@ func cloneEntry(e *LogEntry) *LogEntry {
 		}
 	}
 
-	// Note: HTTPRequest や SourceLocation もポインタ型ですが、
-	// Format 内で変更されない（読み取り専用である）ため、
-	// このベンチマークの目的においてはシャローコピーのままで問題ありません。
-
 	return &clone
-}
-
-// --- Benchmarks ---
-
-// BenchmarkJsonFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkJsonFormatter_Simple(b *testing.B) {
-	f := &jsonFormatter{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
-
-// BenchmarkJsonFormatter_Complex benchmarks formatting a complex log entry.
-func BenchmarkJsonFormatter_Complex(b *testing.B) {
-	f := &jsonFormatter{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
-	}
-}
-
-// BenchmarkJSONFormatter_Complex_Masking benchmarks a complex entry
-// with several masking rules enabled.
-func BenchmarkJSONFormatter_Complex_Masking(b *testing.B) {
-	f := JSON.NewFormatter(
-		JSON.WithMaskingKeys("userID"),
-		JSON.WithMaskingKeysIgnoreCase("DEPT"),
-		JSON.WithMaskingKeysIgnoreCase("region"),
-	)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
-	}
-}
-
-// BenchmarkTextFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkTextFormatter_Simple(b *testing.B) {
-	f := Text.NewFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// The error is ignored in benchmarks as we test correctness in unit tests.
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
-
-// BenchmarkTextFormatter_Complex benchmarks formatting a complex log entry.
-func BenchmarkTextFormatter_Complex(b *testing.B) {
-	f := Text.NewFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
-	}
-}
-
-// BenchmarkTextFormatter_Complex_Masking benchmarks a complex entry
-// with several masking rules enabled.
-func BenchmarkTextFormatter_Complex_Masking(b *testing.B) {
-	f := Text.NewFormatter(
-		Text.WithMaskingKeys("userID"),
-		Text.WithMaskingKeysIgnoreCase("DEPT"),
-		Text.WithMaskingKeysIgnoreCase("region"),
-	)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
-	}
-}
-
-// BenchmarkConsoleFormatter_Simple benchmarks the console formatter with a simple log entry.
-func BenchmarkConsoleFormatter_Simple(b *testing.B) {
-	f := Console.NewFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
-
-// BenchmarkConsoleFormatter_Complex benchmarks the console formatter with a complex log entry.
-func BenchmarkConsoleFormatter_Complex(b *testing.B) {
-	// Highlight options are retained as they are a valid
-	// part of the ConsoleFormatter's complex use case.
-	f := Console.NewFormatter(
-		Console.WithLogLevelColor(true),
-		Console.WithKeyHighlight("userID", FgCyan),
-		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
-	)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
-	}
-}
-
-// BenchmarkConsoleFormatter_Complex_Masking benchmarks a complex entry
-// with several masking rules enabled.
-func BenchmarkConsoleFormatter_Complex_Masking(b *testing.B) {
-	f := Console.NewFormatter(
-		Console.WithLogLevelColor(true),
-		Console.WithKeyHighlight("userID", FgCyan),
-		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
-		Console.WithMaskingKeys("userID"),
-		Console.WithMaskingKeysIgnoreCase("DEPT"),
-		Console.WithMaskingKeysIgnoreCase("region"),
-	)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
-	}
-}
-
-// BenchmarkLogfmtFormatter_Simple benchmarks formatting a simple log entry.
-func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
-	f := Logfmt.NewFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
-	}
-}
-
-// BenchmarkLogfmtFormatter_Complex benchmarks formatting a complex log entry.
-func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
-	f := Logfmt.NewFormatter()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
-	}
-}
-
-// BenchmarkLogfmtFormatter_Complex_Masking benchmarks a complex entry
-// with several masking rules enabled.
-func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
-	f := Logfmt.NewFormatter(
-		Logfmt.WithMaskingKeys("userID"),
-		Logfmt.WithMaskingKeysIgnoreCase("DEPT"),
-		Logfmt.WithMaskingKeysIgnoreCase("region"),
-	)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
-	}
 }

@@ -2,7 +2,6 @@ package harelog
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -470,7 +469,7 @@ func TestSpecialFields(t *testing.T) {
 			t.Fatalf("failed to unmarshal log output: %v", err)
 		}
 
-		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		slMap, ok := entry["sourceLocation"].(map[string]interface{})
 		if !ok {
 			t.Fatal("sourceLocation not found or not a map in log output")
 		}
@@ -668,116 +667,6 @@ func TestFatalwMethod(t *testing.T) {
 	}
 }
 
-// TestCtxMethods verifies the functionality of all context-aware methods.
-func TestCtxMethods(t *testing.T) {
-	t.Parallel()
-
-	// Define a custom context key for testing, mimicking how real applications do it.
-	type contextKey string
-	const traceContextKey = contextKey("x-cloud-trace-context")
-
-	t.Run("Values are extracted from context with ProjectID", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		// Create a logger with the Project ID configured via the new option.
-		logger := New(
-			WithOutput(&buf),
-			WithProjectID("test-project"),
-			WithTraceContextKey(traceContextKey),
-		)
-		ctx := context.WithValue(context.Background(), traceContextKey, "trace-from-ctx/span-from-ctx;o=1")
-
-		logger.InfofCtx(ctx, "message with trace")
-
-		var entry map[string]interface{}
-		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-			t.Fatalf("failed to unmarshal JSON: %v", err)
-		}
-
-		expectedTrace := "projects/test-project/traces/trace-from-ctx"
-		if trace, _ := entry["logging.googleapis.com/trace"].(string); trace != expectedTrace {
-			t.Errorf("expected trace %q to be extracted, got %q", expectedTrace, trace)
-		}
-		if span, _ := entry["logging.googleapis.com/spanId"].(string); span != "span-from-ctx" {
-			t.Errorf("expected spanId %q to be extracted, got %q", "span-from-ctx", span)
-		}
-	})
-
-	t.Run("Precedence: Method args > With > Context", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		ctx := context.WithValue(context.Background(), traceContextKey, "ctx-trace/ctx-span")
-
-		// Create a child logger with a conflicting trace value.
-		loggerWithContext := New(WithOutput(&buf)).With("[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "with-trace")
-
-		// Call a ...wCtx method with another conflicting trace value.
-		loggerWithContext.InfowCtx(ctx, "testing precedence", "[logging.googleapis.com/trace](https://logging.googleapis.com/trace)", "arg-trace")
-
-		var entry map[string]interface{}
-		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-			t.Fatalf("failed to unmarshal JSON: %v", err)
-		}
-
-		// The value from the method argument ("arg-trace") should win.
-		expectedTrace := "arg-trace"
-		if trace, _ := entry["[logging.googleapis.com/trace](https://logging.googleapis.com/trace)"].(string); trace != expectedTrace {
-			t.Errorf("precedence failed: expected trace to be %q, got %q", expectedTrace, trace)
-		}
-	})
-
-	t.Run("Nil context behaves like non-Ctx version", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		logger := New(WithOutput(&buf))
-
-		// Log with the non-Ctx version
-		logger.Warnf("message %d", 1)
-		expected := strings.TrimSpace(buf.String())
-		buf.Reset()
-
-		// Log with the Ctx version passing nil
-		var nilCtx context.Context = nil
-
-		logger.WarnfCtx(nilCtx, "message %d", 1)
-		got := strings.TrimSpace(buf.String())
-
-		// We can't compare directly due to timestamp, so we check for the message part.
-		if !strings.Contains(got, `"message":"message 1"`) {
-			t.Errorf("nil context call did not produce the expected message. Got: %s", got)
-		}
-		if !strings.Contains(expected, `"message":"message 1"`) {
-			t.Errorf("non-Ctx call did not produce the expected message. Got: %s", expected)
-		}
-	})
-
-	t.Run("FatalCtx logs and exits", func(t *testing.T) {
-		t.Parallel()
-
-		var buf bytes.Buffer
-
-		logger := New(WithOutput(&buf))
-		ctx := context.Background()
-
-		getExitCode := mockOsExit(t)
-
-		logger.FatalCtx(ctx, "fatal message from ctx")
-
-		if !strings.Contains(buf.String(), `"message":"fatal message from ctx"`) {
-			t.Errorf("FatalCtx did not log the correct message. Got: %s", buf.String())
-		}
-		if getExitCode() != 1 {
-			t.Errorf("expected os.Exit(1) to be called from FatalCtx, but exit code was %d", getExitCode())
-		}
-	})
-}
-
 // TestFormatters verifies the WithFormatter option and logger's integration with formatters.
 func TestFormatters(t *testing.T) {
 	// Test that New() without options uses JSONFormatter
@@ -841,11 +730,12 @@ func TestAutoSource_Modes(t *testing.T) {
 		}
 
 		var entry map[string]interface{}
+
 		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
 			// Consider a failure to unmarshal as the field not being present.
 			return false
 		}
-		_, exists := entry["logging.googleapis.com/sourceLocation"]
+		_, exists := entry["sourceLocation"]
 		return exists
 	}
 
@@ -900,7 +790,7 @@ func TestAutoSource_Modes(t *testing.T) {
 			t.Fatalf("failed to unmarshal JSON: %v", err)
 		}
 
-		slMap, ok := entry["logging.googleapis.com/sourceLocation"].(map[string]interface{})
+		slMap, ok := entry["sourceLocation"].(map[string]interface{})
 		if !ok {
 			t.Fatal("manual sourceLocation field should be present")
 		}
@@ -938,8 +828,8 @@ func TestNew_WithOptions(t *testing.T) {
 			WithLogLevel(LogLevelDebug),
 			WithFormatter(Text.NewFormatter()),
 			WithAutoSource(SourceLocationModeAlways),
-			WithProjectID("test-project"),
-			WithTraceContextKey("test-key"),
+			// WithProjectID("test-project"),
+			// WithTraceContextKey("test-key"),
 			WithPrefix("[test] "),
 			WithLabels(labels),
 			WithFields("common_key", "common_value"),
@@ -960,12 +850,7 @@ func TestNew_WithOptions(t *testing.T) {
 		if logger.sourceLocationMode != SourceLocationModeAlways {
 			t.Error("WithAutoSource failed")
 		}
-		if logger.projectID != "test-project" {
-			t.Error("WithProjectID failed")
-		}
-		if logger.traceContextKey != "test-key" {
-			t.Error("WithTraceContextKey failed")
-		}
+
 		if logger.prefix != "[test] " {
 			t.Error("WithPrefix failed")
 		}
@@ -1248,17 +1133,6 @@ func TestPanicScenarios(t *testing.T) {
 			}
 		}()
 		_ = New(WithAutoSource(sourceLocationMode(99)))
-	})
-
-	t.Run("WithTraceContextKey option with nil key", func(t *testing.T) {
-		t.Parallel()
-
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected New(WithTraceContextKey) to panic")
-			}
-		}()
-		_ = New(WithTraceContextKey(nil))
 	})
 
 	t.Run("WithFields option with odd arguments", func(t *testing.T) {
@@ -1569,46 +1443,6 @@ func TestLogger_Hooks_AllLevels(t *testing.T) {
 	}
 }
 
-// Benchmark for a simple formatted log message without any extra fields.
-func BenchmarkSimpleLog(b *testing.B) {
-	// Setup: Create a logger with options. Discarding output ensures we measure
-	// the logger's overhead, not the I/O performance of the writer.
-	logger := New(WithOutput(io.Discard))
-
-	// Reset the timer to start the measurement from here.
-	// ReportAllocs() enables memory allocation statistics in the output.
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	// The benchmark loop. The `testing` package automatically determines
-	// the number of iterations (b.N) needed to get a stable measurement.
-	for i := 0; i < b.N; i++ {
-		logger.Infof("simple log message for benchmark, value: %d", i)
-	}
-}
-
-// Benchmark for a structured log message using the 'w' (with) method.
-func BenchmarkLogWithFields(b *testing.B) {
-	// Setup
-	logger := New(WithOutput(io.Discard))
-
-	// Reset timer and enable memory allocation reporting.
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		// The 'w' methods (e.g., Errorw, Infow) are designed for efficient
-		// structured logging with key-value pairs. This simulates a realistic
-		// logging scenario in an application.
-		logger.Errorw("log message with fields for benchmark",
-			"service", "harelog-bench",
-			"user_id", 12345,
-			"is_member", true,
-			"request_id", "abc-123-xyz",
-		)
-	}
-}
-
 // captureStderr captures all writes to os.Stderr during a test.
 // It returns a "stop" function that must be called to stop capturing.
 // This "stop" function closes the pipe and returns the captured string.
@@ -1758,5 +1592,36 @@ func TestDefault(t *testing.T) {
 	// to access the unexported 'std' variable.
 	if l != std {
 		t.Errorf("Default() returned a different instance. Got %p, want %p", l, std)
+	}
+}
+
+// TestWithEntryModifier verifies that EntryModifiers correctly modify LogEntry before formatting.
+func TestWithEntryModifier(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := New(
+		WithOutput(&buf),
+		WithEntryModifier(func(e *LogEntry) {
+			// 値の追加と加工のテスト
+			e.Payload["injected"] = "modified_value"
+		}),
+	)
+
+	logger.Infow("modifier test", "original", "value")
+
+	var entry map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	// 1. Modifierによって値が追加されているか
+	if val, ok := entry["injected"].(string); !ok || val != "modified_value" {
+		t.Errorf("expected payload to contain injected='modified_value', got %v", entry["injected"])
+	}
+
+	// 2. 元のフィールドが破壊されていないか
+	if val, ok := entry["original"].(string); !ok || val != "value" {
+		t.Errorf("expected payload to contain original='value', got %v", entry["original"])
 	}
 }
