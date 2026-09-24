@@ -75,8 +75,8 @@ var benchmarkEntryComplexMasking = &LogEntry{
 func BenchmarkJsonFormatter_Simple(b *testing.B) {
 	f := JSON.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
 	}
 }
@@ -85,8 +85,8 @@ func BenchmarkJsonFormatter_Simple(b *testing.B) {
 func BenchmarkJsonFormatter_Complex(b *testing.B) {
 	f := JSON.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
 	}
 }
@@ -101,8 +101,8 @@ func BenchmarkJSONFormatter_Complex_Masking(b *testing.B) {
 	)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
@@ -111,8 +111,8 @@ func BenchmarkJSONFormatter_Complex_Masking(b *testing.B) {
 func BenchmarkTextFormatter_Simple(b *testing.B) {
 	f := Text.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		// The error is ignored in benchmarks as we test correctness in unit tests.
 		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
 	}
@@ -122,8 +122,8 @@ func BenchmarkTextFormatter_Simple(b *testing.B) {
 func BenchmarkTextFormatter_Complex(b *testing.B) {
 	f := Text.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
 	}
 }
@@ -138,8 +138,8 @@ func BenchmarkTextFormatter_Complex_Masking(b *testing.B) {
 	)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
@@ -148,8 +148,8 @@ func BenchmarkTextFormatter_Complex_Masking(b *testing.B) {
 func BenchmarkConsoleFormatter_Simple(b *testing.B) {
 	f := Console.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
 	}
 }
@@ -164,8 +164,8 @@ func BenchmarkConsoleFormatter_Complex(b *testing.B) {
 		Console.WithKeyHighlight("dept", FgMagenta, AttrBold),
 	)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
 	}
 }
@@ -183,8 +183,8 @@ func BenchmarkConsoleFormatter_Complex_Masking(b *testing.B) {
 	)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }
@@ -193,8 +193,8 @@ func BenchmarkConsoleFormatter_Complex_Masking(b *testing.B) {
 func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
 	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntrySimple) // Use shared entry
 	}
 }
@@ -203,8 +203,8 @@ func BenchmarkLogfmtFormatter_Simple(b *testing.B) {
 func BenchmarkLogfmtFormatter_Complex(b *testing.B) {
 	f := Logfmt.NewFormatter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(benchmarkEntryComplex) // Use shared entry
 	}
 }
@@ -219,8 +219,8 @@ func BenchmarkLogfmtFormatter_Complex_Masking(b *testing.B) {
 	)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = f.Format(cloneEntry(benchmarkEntryComplexMasking))
 	}
 }

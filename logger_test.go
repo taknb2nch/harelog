@@ -1451,12 +1451,12 @@ func BenchmarkSimpleLog(b *testing.B) {
 
 	// Reset the timer to start the measurement from here.
 	// ReportAllocs() enables memory allocation statistics in the output.
-	b.ResetTimer()
+
 	b.ReportAllocs()
 
 	// The benchmark loop. The `testing` package automatically determines
 	// the number of iterations (b.N) needed to get a stable measurement.
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		logger.Infof("simple log message for benchmark, value: %d", i)
 	}
 }
@@ -1467,10 +1467,10 @@ func BenchmarkLogWithFields(b *testing.B) {
 	logger := New(WithOutput(io.Discard))
 
 	// Reset timer and enable memory allocation reporting.
-	b.ResetTimer()
+
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// The 'w' methods (e.g., Errorw, Infow) are designed for efficient
 		// structured logging with key-value pairs. This simulates a realistic
 		// logging scenario in an application.
