@@ -1083,6 +1083,42 @@ func TestSetDefaultFunctions_API(t *testing.T) {
 		}
 		stdMutex.RUnlock()
 	})
+
+	t.Run("SetDefaultLogger with valid logger", func(t *testing.T) {
+		setup() // Reset std
+
+		// カスタム設定を持った新しいロガーを作成
+		customLogger := New(WithLogLevel(LogLevelDebug))
+
+		// 実行
+		SetDefaultLogger(customLogger)
+
+		// RLockで保護しながら、stdが完全に置き換わったことを検証
+		stdMutex.RLock()
+		if std != customLogger {
+			t.Error("SetDefaultLogger did not apply the custom logger")
+		}
+
+		logLevel := std.logLevel.Load()
+
+		if logLevel != uint32(logLevelValueDebug) {
+			t.Errorf("expected custom logger to have LogLevelDebug, got %v", logLevel)
+		}
+		stdMutex.RUnlock()
+	})
+
+	t.Run("SetDefaultLogger with nil panics", func(t *testing.T) {
+		setup() // Reset std
+
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected SetDefaultLogger(nil) to panic")
+			}
+		}()
+
+		// nil を渡すと確実に panic することを検証
+		SetDefaultLogger(nil)
+	})
 }
 
 // TestFatalMethods_AlwaysExit verifies that Fatal... methods always call os.Exit.
