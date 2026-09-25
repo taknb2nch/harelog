@@ -1058,6 +1058,19 @@ func Clone() *Logger {
 	return std.Clone()
 }
 
+// SetDefaultLogger replaces the global standard logger with the provided logger instance.
+// This is the recommended way to apply complex options to the default logger.
+func SetDefaultLogger(l *Logger) {
+	if l == nil {
+		panic("harelog: nil logger provided to SetDefaultLogger")
+	}
+
+	stdMutex.Lock()
+	defer stdMutex.Unlock()
+
+	std = l
+}
+
 // SetDefaultLogLevel sets the log level for the default logger.
 // The provided level should be validated with ParseLogLevel first.
 func SetDefaultLogLevel(level LogLevel) {
