@@ -16,6 +16,9 @@ import (
 )
 
 const (
+	// DefaultTimeLayout is the standard timestamp format used across all formatters.
+	DefaultTimeLayout string = "2006-01-02T15:04:05.000Z07:00"
+
 	maskedValueString string = "[MASKED]"
 )
 
@@ -277,9 +280,10 @@ func (f *jsonFormatter) Format(e *LogEntry) ([]byte, error) {
 // This is used internally by the logger to output warnings about invalid keys.
 func (f *jsonFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
+	var scratch [64]byte
 
 	b.WriteString(`{"timestamp":"`)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339Nano))
 	b.WriteString(`","severity":"`)
 	b.WriteString(string(e.Severity))
 	b.WriteString(`","message":`)
@@ -346,7 +350,7 @@ func (f *textFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	// Timestamp
 	b.Grow(128)
-	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], DefaultTimeLayout))
 	b.WriteByte(' ')
 
 	b.WriteByte('[')
@@ -571,10 +575,11 @@ func (f *textFormatter) OverrideKeys(overrides map[string]string) {
 
 func formatBasicMessage(e *LogEntry) []byte {
 	var b bytes.Buffer
+	var scratch [64]byte
 
 	// Timestamp
 	b.Grow(32)
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], DefaultTimeLayout))
 	b.WriteByte(' ')
 
 	// Log Level
@@ -737,7 +742,7 @@ func (f *consoleFormatter) Format(e *LogEntry) ([]byte, error) {
 
 	// Timestamp
 	b.Grow(128)
-	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], DefaultTimeLayout))
 	b.WriteByte(' ')
 
 	enableLogLevelColor := f.isEnableColorSet && f.enableColor
@@ -1101,7 +1106,7 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 	b.Grow(128)
 	b.WriteString("timestamp")
 	b.WriteByte('=')
-	b.Write(e.Time.AppendFormat(scratch[:0], time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], DefaultTimeLayout))
 	b.WriteByte(' ')
 
 	// Severity
@@ -1283,12 +1288,13 @@ func (f *logfmtFormatter) Format(e *LogEntry) ([]byte, error) {
 // This is used internally by the logger to output warnings about invalid keys.
 func (f *logfmtFormatter) FormatMessageOnly(e *LogEntry) ([]byte, error) {
 	var b bytes.Buffer
+	var scratch [64]byte
 
 	// Timestamp
 	b.Grow(42)
 	b.WriteString("timestamp")
 	b.WriteByte('=')
-	b.Write(e.Time.AppendFormat(nil, time.RFC3339))
+	b.Write(e.Time.AppendFormat(scratch[:0], DefaultTimeLayout))
 	b.WriteByte(' ')
 
 	// Severity

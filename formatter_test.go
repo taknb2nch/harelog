@@ -264,7 +264,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Time:     testTime,
 				},
 
-				expected: `2025-09-30T14:00:00Z [INFO] server started`,
+				expected: `2025-09-30T14:00:00.000Z [INFO] server started`,
 			},
 			{
 				name: "Message with trailing newline (trims newline)",
@@ -274,7 +274,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					Time:     testTime,
 				},
 
-				expected: `2025-09-30T14:00:00Z [INFO] message with newline`,
+				expected: `2025-09-30T14:00:00.000Z [INFO] message with newline`,
 			},
 			{
 				name: "Message with simple payload (payload sorted)",
@@ -289,7 +289,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [ERROR] request failed { active=true, path=/api/v1/users, status=500 }`,
+				expected: `2025-09-30T14:00:00.000Z [ERROR] request failed { active=true, path=/api/v1/users, status=500 }`,
 			},
 			{
 				name: "Message with all special fields (fixed order + map sort)",
@@ -313,7 +313,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [WARN] complex event { source=app/server.go:152, trace=trace-id-123, spanId=span-id-456, correlationId=corr-id-789, http.method=POST, http.status=401, http.url=/api/v1/login, label.cluster=A, label.region=jp-east, dept=eng, userID=user-abc }`,
+				expected: `2025-09-30T14:00:00.000Z [WARN] complex event { source=app/server.go:152, trace=trace-id-123, spanId=span-id-456, correlationId=corr-id-789, http.method=POST, http.status=401, http.url=/api/v1/login, label.cluster=A, label.region=jp-east, dept=eng, userID=user-abc }`,
 			},
 			{
 				name: "Message with all special fields (require quoting)",
@@ -338,7 +338,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [WARN] complex event { source="app/server.go :152", trace="trace-id 123", spanId="span-id=456", correlationId="corr-id\"789\"", http.method="POST 123", http.status=401, http.url="/api/v1/login?id=999", label.region="jp east", userID="user abc" }`,
+				expected: `2025-09-30T14:00:00.000Z [WARN] complex event { source="app/server.go :152", trace="trace-id 123", spanId="span-id=456", correlationId="corr-id\"789\"", http.method="POST 123", http.status=401, http.url="/api/v1/login?id=999", label.region="jp east", userID="user abc" }`,
 			},
 			{
 				name: "Payload with duplicate struct fields (skips payload fields)",
@@ -353,7 +353,7 @@ func TestTextFormatter_Format(t *testing.T) {
 					},
 				},
 
-				expected: `2025-09-30T14:00:00Z [INFO] duplicate fields test { traceId=trace-B, userID=user-123 }`,
+				expected: `2025-09-30T14:00:00.000Z [INFO] duplicate fields test { traceId=trace-B, userID=user-123 }`,
 			},
 		}
 
@@ -395,7 +395,7 @@ func TestTextFormatter_FormatMessageOnly(t *testing.T) {
 	}
 
 	// Expected format: TIMESTAMP [LEVEL] MESSAGE
-	expected := `2025-10-28T17:05:00Z [WARN] harelog: invalid key "key=invalid" contains space, =, or ", field ignored`
+	expected := `2025-10-28T17:05:00.000Z [WARN] harelog: invalid key "key=invalid" contains space, =, or ", field ignored`
 	got := string(b)
 
 	if got != expected {
@@ -673,7 +673,7 @@ func TestConsoleFormatter(t *testing.T) {
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			// Use %q for clearer diffs with escape codes
@@ -708,7 +708,7 @@ func TestConsoleFormatter(t *testing.T) {
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -737,7 +737,7 @@ func TestConsoleFormatter(t *testing.T) {
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -766,7 +766,7 @@ func TestConsoleFormatter(t *testing.T) {
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -796,7 +796,7 @@ func TestConsoleFormatter(t *testing.T) {
 		infoLevel.EnableColor()
 		hlInfo := infoLevel.Sprint("[INFO]")
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, hlInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -822,7 +822,7 @@ func TestConsoleFormatter(t *testing.T) {
 		expectedHighlight := cyanBold.Sprint(`userID=user-123`)
 		plainInfo := "[INFO]" // Log level should be plain
 		// Payload keys sorted: action, requestID, userID
-		expected := fmt.Sprintf(`2025-10-14T13:30:00Z %s user action { action=logout, requestID="req abc", %s }`, plainInfo, expectedHighlight)
+		expected := fmt.Sprintf(`2025-10-14T13:30:00.000Z %s user action { action=logout, requestID="req abc", %s }`, plainInfo, expectedHighlight)
 
 		if output != expected {
 			t.Errorf("unexpected console output:\ngot:  %q\nwant: %q", output, expected)
@@ -870,7 +870,7 @@ func TestConsoleFormatter_FormatMessageOnly(t *testing.T) {
 	}
 
 	// Expected format: TIMESTAMP [LEVEL] MESSAGE (no color expected)
-	expected := `2025-10-28T17:10:00Z [WARN] harelog: invalid key "key\"invalid" contains space, =, or ", label ignored`
+	expected := `2025-10-28T17:10:00.000Z [WARN] harelog: invalid key "key\"invalid" contains space, =, or ", label ignored`
 	got := string(b)
 
 	if got != expected {
@@ -1073,7 +1073,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Time:     testTime,
 			},
 			// messageにスペースが含まれるためクォートされる
-			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="server started"`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=INFO message="server started"`,
 		},
 		{
 			name: "Message with trailing newline (trims newline)",
@@ -1083,7 +1083,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				Time:     testTime,
 			},
 			// messageがクォートされ、\n はトリムされる
-			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="message with newline"`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=INFO message="message with newline"`,
 		},
 		{
 			name: "Message with simple payload (payload sorted)",
@@ -1099,7 +1099,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 			},
 			// textFormatterと異なり { } で囲まない
 			// 値にスペース, =, " がないためクォートされない
-			expected: `timestamp=2025-09-30T14:00:00Z severity=ERROR message="request failed" active=true path=/api/v1/users status=500`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=ERROR message="request failed" active=true path=/api/v1/users status=500`,
 		},
 		{
 			name: "Message with all special fields (fixed order + map sort)",
@@ -1125,7 +1125,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 			// textFormatter と同じキー命名規則 (http.status, label.cluster) を想定
 			// logfmt の仕様に基づき、値に特殊文字がなければクォートしない
 			// "app/server.go:152" は ':' を含むが、logfmtのクォート対象(space, =, ")ではない
-			expected: `timestamp=2025-09-30T14:00:00Z severity=WARN message="complex event" source=app/server.go:152 trace=trace-id-123 spanId=span-id-456 correlationId=corr-id-789 http.method=POST http.status=401 http.url=/api/v1/login label.cluster=A label.region=jp-east dept=eng userID=user-abc`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=WARN message="complex event" source=app/server.go:152 trace=trace-id-123 spanId=span-id-456 correlationId=corr-id-789 http.method=POST http.status=401 http.url=/api/v1/login label.cluster=A label.region=jp-east dept=eng userID=user-abc`,
 		},
 		{
 			name: "Payload with duplicate struct fields (skips payload fields)",
@@ -1140,7 +1140,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 				},
 			},
 			// StructFields (trace=trace-A) が Payload (trace=trace-B) より優先される
-			expected: `timestamp=2025-09-30T14:00:00Z severity=INFO message="duplicate fields test" traceId=trace-B userID=user-123`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=INFO message="duplicate fields test" traceId=trace-B userID=user-123`,
 		},
 		{
 			name: "Payload requiring quotes (logfmt specific)",
@@ -1158,7 +1158,7 @@ func TestLogfmtFormatter_Format(t *testing.T) {
 			// logfmtのクォーティングルールを検証
 			// キー/値のスペース、"、= の扱い
 			// "has_quote" の値は "a \"quoted\" str" となる
-			expected: `timestamp=2025-09-30T14:00:00Z severity=DEBUG message="logfmt quote test" empty="" has_eq="key=value" has_quote="a \"quoted\" str" simple=value`,
+			expected: `timestamp=2025-09-30T14:00:00.000Z severity=DEBUG message="logfmt quote test" empty="" has_eq="key=value" has_quote="a \"quoted\" str" simple=value`,
 		},
 	}
 
@@ -1202,7 +1202,7 @@ func TestLogfmtFormatter_FormatMessageOnly(t *testing.T) {
 
 	// Expected logfmt format: timestamp=... severity=... message=...
 	// メッセージ内にスペース、"、= が含まれるため、全体がクォートされ、内部の " がエスケープされる
-	expected := `timestamp=2025-10-28T17:15:00Z severity=WARN message="harelog: invalid key \"key=invalid\" contains space, =, or \", field ignored"`
+	expected := `timestamp=2025-10-28T17:15:00.000Z severity=WARN message="harelog: invalid key \"key=invalid\" contains space, =, or \", field ignored"`
 	got := string(b)
 
 	if got != expected {
