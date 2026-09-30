@@ -6,14 +6,8 @@ import "github.com/taknb2nch/harelog"
 func WithCloudLogging(projectID string) harelog.Option {
 	return func(l *harelog.Logger) {
 		harelog.WithEntryModifier(func(e *harelog.LogEntry) {
-			if projectID != "" {
-				if e.TraceID != "" {
-					e.TraceID = "projects/" + projectID + "/traces/" + e.TraceID
-				}
-
-				e.Payload["projectId"] = projectID
-			} else {
-				delete(e.Payload, "projectId")
+			if projectID != "" && e.TraceID != "" {
+				e.TraceID = "projects/" + projectID + "/traces/" + e.TraceID
 			}
 		})(l)
 
